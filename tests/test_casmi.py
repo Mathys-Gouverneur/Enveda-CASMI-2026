@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from casmi import data as D
+from casmi import formula as FO
 from casmi import metric as M
 from casmi import spectra as SP
 
@@ -164,3 +165,62 @@ def test_spectrum_uid_is_content_addressed():
     uid = D.spectrum_uid(df)
     assert uid.iloc[0] == uid.iloc[1]        # identical spectra, identical id
     assert uid.iloc[0] != uid.iloc[2]
+
+
+# ---------------------------------------------------------------------------- formula
+
+def test_a_formula_contains_itself_and_its_parts():
+    """The grid implementation this replaced failed exactly here.
+
+    Rounding each element's mass to a 1 mDa grid independently let the error accumulate
+    along the sum: caffeine's own formula landed 2 mDa from where its exact mass puts it,
+    so the formula did not contain itself. Exact float enumeration cannot drift.
+    """
+    reach = FO.reachable_masses("C8H10N4O2")
+    for sub in ("C8H10N4O2", "C7H8N4O2", "C6H5N3O", "CH3", "C", "H"):
+        m = D.formula_mass(sub)
+        i = np.searchsorted(reach, m)
+        nearest = min(abs(m - reach[max(i - 1, 0)]), abs(m - reach[min(i, len(reach) - 1)]))
+        assert nearest < 1e-6, f"{sub} should be reachable inside caffeine"
+
+
+def test_a_formula_does_not_contain_more_than_itself():
+    reach = FO.reachable_masses("C8H10N4O2")
+    for sub in ("C9H10N4O2", "C8H10N5O2", "C8H11N4O2"):
+        m = D.formula_mass(sub)
+        i = np.searchsorted(reach, m)
+        nearest = min(abs(m - reach[max(i - 1, 0)]), abs(m - reach[min(i, len(reach) - 1)]))
+        assert nearest > 1e-6, f"{sub} must not be reachable inside caffeine"
+
+
+def test_enumeration_size_is_the_product_of_counts():
+    assert len(FO.reachable_masses("C8H10N4O2")) == 9 * 11 * 5 * 3
+
+
+def test_unknown_element_formula_is_none():
+    assert FO.reachable_masses("C6XzH6") is None
+
+
+def test_chance_rate_grows_with_formula_size():
+    """The bias the adjustment exists to remove: bigger formulas match more by luck."""
+    small = FO.chance_match_rate("C8H10N4O2", 200.0)
+    big = FO.chance_match_rate("C25H40O10", 500.0)
+    assert 0.0 < small < big <= 1.0
+
+
+def test_adjusted_score_prefers_the_true_formula():
+    """A caffeine spectrum must score caffeine's formula above a same-mass decoy.
+
+    C7H14O6 sits in caffeine's own ±10 ppm mass window, so this is the real
+    discrimination the gate has to make.
+    """
+    tr = D.load_train(
+        columns=["molecular_formula", "adduct", "precursor_mz", "num_peaks",
+                 "ms2_mzs", "ms2_normalized_intensities"],
+        filters=[("molecular_formula", "==", "C8H10N4O2"), ("adduct", "==", "[M+H]+")])
+    if tr.empty:                                   # no data on this machine
+        pytest.skip("train.parquet not available")
+    s = tr.sort_values("num_peaks", ascending=False).iloc[0]
+    ranked = FO.rank_formulas(s.ms2_mzs, s.ms2_normalized_intensities, s.precursor_mz,
+                              ["C8H10N4O2", "C7H14O6"])
+    assert ranked[0][0] == "C8H10N4O2"

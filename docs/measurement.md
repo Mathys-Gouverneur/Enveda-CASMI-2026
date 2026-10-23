@@ -156,7 +156,74 @@ and the table subtracted the electron from it a second time. 0.55 mDa — about 
 300 Da molecule, enough to shift a ±5 ppm window. The literal values now live in
 `tests/test_casmi.py`, where a disagreement fails loudly.
 
-## 6. Metric reimplementation
+## 6. Formula identification: worth 30 % of its prize, and only as a soft signal
+
+`scripts/eval_formula.py`. The prize is bounded first: ranking the mass window at random
+scores 0.085, ranking only the **true-formula** subset at random scores 0.210. So a
+perfect formula signal is worth up to **0.125** — it more than doubles the floor. But
+note what it does *not* do: 34 isomers remain in the median true-formula group, against 77
+in the mass window. A 2.3× reduction, not a solution. Same-formula separation stays the
+core problem.
+
+The signal is free of any licence or external data: **every fragment is a sub-formula of
+the molecule**, so a candidate formula can be scored on how much of the spectrum's
+intensity it explains as sub-formulas of itself.
+
+### The bias that made the first version useless
+
+Raw explained intensity gave **32.2 %** formula top-1 accuracy and a *negative* gain on
+the task. The cause is structural, not a bug: a formula with more atoms explains more
+peaks for free. Caffeine admits 1,485 sub-formula masses across 194 Da — one every
+0.13 Da — while a 400 Da formula admits 11,718, one every 0.034 Da. Against a ±4 mDa
+tolerance with a ±1 H allowance, the larger formula matches most of any spectrum by
+chance. **The score was ranking formulas by density, not by correctness.**
+
+`formula.chance_match_rate` computes the by-chance hit rate exactly — the measure of the
+union of tolerance intervals around every reachable mass, over the mass range — and the
+adjusted score is `explained − chance`:
+
+| | raw | chance-adjusted |
+|---|---|---|
+| formula top-1 | 32.2 % | **51.5 %** |
+| top-2 / top-3 | 57.9 / 77.2 % | **72.5 / 83.7 %** |
+
+### Hard gate versus soft ordering
+
+Paired on identical permutations (one RNG seeded per molecule, so every condition sees the
+same draw):
+
+| design | MRR | share of the 0.125 prize |
+|---|---|---|
+| mass window (base) | 0.0854 | — |
+| hard gate on top-1 formula | 0.0898 | 4 % |
+| hard gate on top-2 | 0.0985 | 10 % |
+| **soft ordering by formula score** | **0.1229** | **30 %** |
+| oracle: true formula known | 0.2102 | 100 % |
+
+A hard gate must clear `base/oracle` = **41 %** formula accuracy merely to break even,
+because being wrong costs the molecule its entire score. At 51.5 % it barely clears it.
+Soft ordering — visit formula groups in score order, never exclude anything — captures
+seven times more.
+
+Two conclusions worth carrying:
+
+- **The formula score belongs inside a ranker as a feature, not in front of it as a
+  filter.** This is why the public stack reranks same-formula groups rather than gating on
+  formula; we now have the arithmetic for why.
+- Without the chance adjustment, soft ordering captures 20 % and the hard gate is
+  **−6 %**. The correction is most of what makes the signal usable.
+
+### An implementation note that cost a debugging cycle
+
+Sub-formula reachability was first marked on a 1 mDa grid, rounding each element's mass to
+the grid independently. The error accumulates along the sum: caffeine's own formula landed
+**2 mDa** from where its exact mass puts it, so a formula did not contain itself, and the
+drift grew with molecule size. Exact float enumeration of all `prod(nᵢ+1)` sub-formula
+masses cannot drift and costs at most a few hundred thousand floats in this mass range —
+11 ms for `C30H50N5O10S2`. Two tests now assert that a formula contains its own parts and
+nothing more.
+
+## 7. Metric reimplementation
 
 `src/casmi/metric.py`, 40 tests in `tests/test_casmi.py`. The three rules that decide
 whether a local number matches the board:
