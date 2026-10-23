@@ -33,8 +33,12 @@ def main() -> None:
     out = __import__("pathlib").Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
+    # instrument_type / ionization_mode / collision_energy_ev are carried so the query
+    # frame can be fed to a conditioned model without re-reading the 3 GB file. They do
+    # not affect which molecules are selected.
     cols = ["ingest_lib", "inchikey14", "adduct", "precursor_mz", "num_peaks",
-            "collision_energy_orig", "ms2_mzs", "ms2_normalized_intensities"]
+            "collision_energy_orig", "instrument_type", "ionization_mode",
+            "collision_energy_ev", "ms2_mzs", "ms2_normalized_intensities"]
     print("reading the timsTOF half of train.parquet ...")
     tims = D.load_train(columns=cols, timstof_only=True)
     print(f"  {len(tims):,} spectra, {tims.inchikey14.nunique():,} molecules")

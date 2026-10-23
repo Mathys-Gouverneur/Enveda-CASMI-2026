@@ -5,13 +5,20 @@ The model the test regime calls for. `measurement.md` establishes that the test 
 retrieval scores exactly 0 and random ranking of the mass window scores 0.085. This is
 what beats that floor.
 
-Architecture, deliberately close to the official tutorial's encoder so the comparison is
-about the training data rather than the design:
+Two models live here, and the pair is the experiment:
 
-    (m/z, intensity) pairs -> sinusoidal peak embedding -> transformer encoder
-                           -> masked mean pool -> MLP head -> fingerprint logits
+`FPNet` (v1) — the control. Peaks only, trained on the timsTOF half alone, so domain
+purity is bought by discarding 55% of the corpus:
 
-Three choices worth justifying:
+    (m/z, intensity) -> sinusoidal peak embedding -> transformer encoder
+                     -> masked mean pool -> MLP head -> fingerprint logits
+
+`FPNetV2` — adds per-peak neutral loss, a global token carrying precursor, collision
+energy, polarity, adduct and instrument, and CLS ⊕ mean pooling. The conditioning lets one
+model train on all 2.54 M spectra and *learn* the instrument correction instead of our
+selecting for it. Running both is how we find out which place that knowledge belongs.
+
+Three choices in v1 worth justifying, all carried into v2:
 
 **Sinusoidal embedding over log-m/z.** A peak's position is a continuous mass, not a
 sequence index, and the information is in exact position — 4 decimals, because that is
@@ -32,6 +39,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 
@@ -141,6 +149,128 @@ def collate_spectra(mzs, intensities, max_peaks: int, precursors=None):
         IT[i, at:at + k] = it
         PAD[i, at:at + k] = False
     return (torch.from_numpy(MZ), torch.from_numpy(IT), torch.from_numpy(PAD))
+
+
+# ------------------------------------------------------------------ conditioned variant
+
+@dataclass
+class FPNetV2Config(FPNetConfig):
+    """FPNet plus the conditioning the public model has and v1 lacks.
+
+    Three additions, in expected order of value:
+
+    **Instrument / adduct conditioning.** The whole corpus is 2.54 M spectra across 82
+    instrument types and 121 adducts; the test is 100% timsTOF. v1's answer was to train
+    only on the 1.15 M timsTOF spectra — domain purity bought by discarding 55% of the
+    data. Learned embeddings let one model use everything and learn the correction
+    instead, which is what the public FPNet does. Every adduct and instrument present in
+    the test also occurs in train, so no test spectrum ever hits the out-of-vocabulary
+    bucket.
+
+    **Neutral-loss channel per peak.** A second sinusoidal embedding of
+    `precursor − m/z`. Our measurement that a neutral-loss *cosine* hurts was scoped to
+    same-molecule retrieval, where fragment masses already match; losses are what relate
+    a molecule to its analogues, which is the regime that matters.
+
+    **CLS ⊕ mean pooling.** The global token carries precursor, energy, polarity, adduct
+    and instrument, so reading it out alongside the peak mean gives the head both the
+    metadata summary and the spectrum summary.
+    """
+    n_adducts: int = 33            #: 32 most frequent + one out-of-vocabulary bucket
+    n_instruments: int = 49        #: 48 most frequent + one OOV bucket
+    use_neutral_loss: bool = True
+    use_cls: bool = True
+
+
+def build_vocab(values, size: int) -> dict:
+    """Value -> index, most frequent first, index 0 reserved for out-of-vocabulary.
+
+    Capped on purpose: 121 adducts occur in train but 22 cover 99.9% of spectra, so the
+    tail is a handful of examples each and an embedding fitted on them is noise. Anything
+    outside the cap shares the OOV embedding.
+    """
+    counts = pd.Series(values).value_counts()
+    return {v: i + 1 for i, v in enumerate(counts.index[:size - 1])}
+
+
+def encode_vocab(values, vocab: dict) -> np.ndarray:
+    return np.array([vocab.get(v, 0) for v in values], dtype=np.int64)
+
+
+def mean_collision_energy(column) -> tuple[np.ndarray, np.ndarray]:
+    """`collision_energy_ev` is a list of 0-5 values. Returns (mean eV, present mask).
+
+    13.3% of train spectra carry no energy at all, and 0 eV is a *valid* reading meaning
+    no fragmentation — so a missing value cannot be filled with zero. The mask lets the
+    model tell "no fragmentation" from "not recorded".
+    """
+    out = np.zeros(len(column), dtype=np.float32)
+    present = np.zeros(len(column), dtype=np.float32)
+    for i, v in enumerate(column):
+        if v is not None and len(v):
+            out[i] = float(np.mean(v))
+            present[i] = 1.0
+    return out, present
+
+
+class FPNetV2(nn.Module):
+    """FPNet with per-peak neutral loss, a metadata global token, and CLS ⊕ mean pooling."""
+
+    def __init__(self, cfg: FPNetV2Config):
+        super().__init__()
+        self.cfg = cfg
+        d = cfg.d_model
+
+        self.mz_embed = PeakEmbedding(cfg)
+        self.loss_embed = PeakEmbedding(cfg) if cfg.use_neutral_loss else None
+        # Project the concatenated peak channels back to d_model.
+        self.peak_proj = nn.Linear(d * (2 if cfg.use_neutral_loss else 1), d)
+
+        self.precursor_embed = PeakEmbedding(cfg)
+        self.adduct = nn.Embedding(cfg.n_adducts, d)
+        self.instrument = nn.Embedding(cfg.n_instruments, d)
+        # collision energy, its present/absent flag, polarity, log precursor
+        self.global_proj = nn.Linear(d + 4, d)
+
+        layer = nn.TransformerEncoderLayer(
+            d_model=d, nhead=cfg.n_heads, dim_feedforward=cfg.d_ff, dropout=cfg.dropout,
+            activation="gelu", batch_first=True, norm_first=True)
+        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.n_layers,
+                                             enable_nested_tensor=False)
+        self.norm = nn.LayerNorm(d)
+        head_in = d * (2 if cfg.use_cls else 1)
+        self.head = nn.Sequential(
+            nn.Linear(head_in, cfg.d_ff), nn.GELU(), nn.Dropout(cfg.dropout),
+            nn.Linear(cfg.d_ff, cfg.n_bits))
+
+    def forward(self, mz, intensity, pad_mask, precursor, adduct_idx, instrument_idx,
+                collision_energy, energy_present, polarity):
+        peaks = self.mz_embed(mz, intensity)
+        if self.loss_embed is not None:
+            # Fragments heavier than the precursor are artefacts; clamp rather than drop,
+            # so the peak keeps its position in the sequence.
+            nl = (precursor.unsqueeze(1) - mz).clamp(min=0.0)
+            peaks = torch.cat([peaks, self.loss_embed(nl, intensity)], dim=-1)
+        peaks = self.peak_proj(peaks)
+
+        g = self.global_proj(torch.cat([
+            self.precursor_embed(precursor.unsqueeze(1),
+                                 torch.ones_like(precursor).unsqueeze(1)).squeeze(1),
+            (collision_energy / 100.0).unsqueeze(-1),
+            energy_present.unsqueeze(-1),
+            polarity.unsqueeze(-1),
+            (torch.log1p(precursor) / 10.0).unsqueeze(-1),
+        ], dim=-1)) + self.adduct(adduct_idx) + self.instrument(instrument_idx)
+
+        x = torch.cat([g.unsqueeze(1), peaks], dim=1)
+        pad = torch.cat([torch.zeros(len(mz), 1, dtype=torch.bool, device=pad_mask.device),
+                         pad_mask], dim=1)
+        x = self.norm(self.encoder(x, src_key_padding_mask=pad))
+
+        keep = (~pad[:, 1:]).unsqueeze(-1).to(x.dtype)
+        mean = (x[:, 1:] * keep).sum(dim=1) / keep.sum(dim=1).clamp_min(1.0)
+        pooled = torch.cat([x[:, 0], mean], dim=-1) if self.cfg.use_cls else mean
+        return self.head(pooled)
 
 
 def pos_weight_from(Y: np.ndarray, cap: float = 50.0) -> torch.Tensor:

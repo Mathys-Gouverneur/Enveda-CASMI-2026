@@ -13,6 +13,7 @@ import pytest
 
 from casmi import data as D
 from casmi import formula as FO
+from casmi import fpnet as N
 from casmi import metric as M
 from casmi import spectra as SP
 
@@ -248,3 +249,78 @@ def test_best_per_molecule_dedups_and_caps():
     out = SP.best_per_molecule(sim, np.array(["m"], dtype=object),
                                np.array(["A", "A", "B"], dtype=object), n_keep=5)
     assert [k for k, _ in out["m"]] == ["A", "B"]
+
+
+# ------------------------------------------------------------------------------ fpnet
+
+def _toy_batch(n=3, p=6):
+    import torch
+    mz = torch.rand(n, p) * 400 + 50
+    it = torch.rand(n, p)
+    pad = torch.zeros(n, p, dtype=torch.bool)
+    pad[-1, p // 2:] = True                       # last row partly padded
+    return mz, it, pad
+
+
+def test_collate_truncates_by_intensity_not_by_mz():
+    """Keeping the first peaks by m/z would discard the high-mass fragments."""
+    mzs = [np.array([100.0, 150.0, 200.0, 400.0])]
+    its = [np.array([0.1, 1.0, 0.5, 0.2])]        # the 100 Da peak is the weakest
+    mz, it, pad = N.collate_spectra(mzs, its, max_peaks=3, precursors=np.array([500.0]))
+    kept = mz[0].numpy()[1:]                      # position 0 is the precursor
+    assert 100.0 not in kept
+    assert it[0, 0] == 2.0 and not pad[0, 0]      # precursor flagged out of range
+
+
+def test_fpnet_is_permutation_invariant():
+    """A spectrum is a set; peak storage order must not change the prediction."""
+    import torch
+    cfg = N.FPNetConfig(n_bits=64, d_model=64, n_layers=2, n_heads=4, d_ff=128)
+    m = N.FPNet(cfg).eval()
+    mz, it, pad = _toy_batch()
+    perm = torch.randperm(mz.shape[1])
+    with torch.no_grad():
+        a = m(mz, it, pad)
+        b = m(mz[:, perm], it[:, perm], pad[:, perm])
+    assert float((a[:-1] - b[:-1]).abs().max()) < 1e-4
+
+
+def test_fpnet_v2_conditioning_changes_the_output():
+    """If the instrument embedding did nothing, the whole v2 experiment is void."""
+    import torch
+    cfg = N.FPNetV2Config(n_bits=64, d_model=64, n_layers=2, n_heads=4, d_ff=128)
+    m = N.FPNetV2(cfg).eval()
+    mz, it, pad = _toy_batch()
+    prec = torch.full((3,), 400.0)
+    ad, ce = torch.ones(3, dtype=torch.long), torch.full((3,), 40.0)
+    pres, pol = torch.ones(3), torch.ones(3)
+    with torch.no_grad():
+        a = m(mz, it, pad, prec, ad, torch.ones(3, dtype=torch.long), ce, pres, pol)
+        b = m(mz, it, pad, prec, ad, torch.full((3,), 5, dtype=torch.long), ce, pres, pol)
+    assert float((a - b).abs().max()) > 1e-3
+
+
+def test_vocab_reserves_zero_for_out_of_vocabulary():
+    v = N.build_vocab(["[M+H]+"] * 10 + ["[M-H]-"] * 5 + ["[M+Na]+"], size=3)
+    assert 0 not in v.values()
+    assert list(N.encode_vocab(["[M+H]+", "[M-H]-", "[M+Na]+", "unseen"], v)) == [1, 2, 0, 0]
+
+
+def test_zero_collision_energy_is_not_missing_collision_energy():
+    """0 eV is a real reading meaning no fragmentation; absent is a different thing."""
+    ce, present = N.mean_collision_energy([[20.0, 40.0], [], None, [0.0]])
+    assert ce[0] == pytest.approx(30.0) and present[0] == 1.0
+    assert present[1] == 0.0 and present[2] == 0.0
+    assert ce[3] == 0.0 and present[3] == 1.0
+
+
+def test_pos_weight_is_capped():
+    """Uncapped, a bit in 0.5% of molecules gets weight 200 and drowns every other bit."""
+    Y = np.zeros((1000, 3), dtype=np.uint8)
+    Y[:500, 0] = 1          # 50%  -> weight 1
+    Y[:1, 1] = 1            # 0.1% -> weight ~1000, must clamp
+    Y[:, 2] = 1             # 100% -> weight 0
+    w = N.pos_weight_from(Y, cap=50.0).numpy()
+    assert w[0] == pytest.approx(1.0, abs=0.01)
+    assert w[1] == pytest.approx(50.0)
+    assert w[2] == pytest.approx(0.0, abs=1e-6)

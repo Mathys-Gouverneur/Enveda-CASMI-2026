@@ -1,12 +1,25 @@
 #!/usr/bin/env python
-"""Train the spectrum -> fingerprint model on the timsTOF half, then rank with it.
+"""Train the spectrum -> fingerprint model, then rank candidates with it.
 
-    python scripts/train_fpnet.py --epochs 6
+    python scripts/train_fpnet.py --epochs 10               # v1, the control
+    python scripts/train_fpnet.py --v2 --epochs 10          # conditioned, all instruments
+
+Two configurations, and the pair is the experiment:
+
+**v1** trains on the timsTOF half alone. Domain purity bought by discarding 55% of the
+corpus, because a model that cannot see which instrument produced a spectrum has no way
+to use the rest.
+
+**v2** (`--v2`) conditions on instrument, adduct, collision energy and polarity through a
+global token, adds a per-peak neutral-loss channel, and pools CLS together with the mean.
+That lets one model train on all 2.54M spectra and *learn* the instrument correction, so
+`--v2` implies `--all-instruments`. This is what the public FPNet does, and running both
+answers whether instrument knowledge belongs in the data selection or in the model.
 
 What it does, and why in this order:
 
-1. Builds a training set of timsTOF spectra whose molecules are **not** in the validation
-   split, so nothing leaks. Targets are exact RDKit fingerprints of the molecule.
+1. Builds a training set whose molecules are **not** in the validation split, so nothing
+   leaks. Targets are exact RDKit fingerprints of the molecule.
 2. Selects the bits worth predicting (dropping the near-constant ones) and stores the
    selection with the checkpoint — a model and its bit selection are one artefact.
 3. Trains with per-bit BCE, balanced by positive frequency.
@@ -34,19 +47,47 @@ from casmi import data as D
 from casmi import fingerprint as FP
 from casmi import fpnet as N
 from casmi import metric as M
+from casmi import spectra as SP
+
+
+class Conditioning:
+    """The metadata tensors FPNetV2 reads, and the vocabularies they index into.
+
+    Built once from the training frame and then applied to any frame, so the validation
+    and test spectra are encoded against exactly the vocabulary the model was fitted
+    with. Index 0 is the out-of-vocabulary bucket; every adduct and instrument present in
+    test.parquet also occurs in train, so the test never lands there.
+    """
+
+    def __init__(self, df: pd.DataFrame, n_adducts: int, n_instruments: int):
+        self.adduct = N.build_vocab(df.adduct, n_adducts)
+        self.instrument = N.build_vocab(df.instrument_type, n_instruments)
+
+    def encode(self, df: pd.DataFrame) -> dict[str, np.ndarray]:
+        ce, present = N.mean_collision_energy(df.collision_energy_ev.to_numpy())
+        return {
+            "adduct": N.encode_vocab(df.adduct, self.adduct),
+            "instrument": N.encode_vocab(df.instrument_type, self.instrument),
+            "ce": ce,
+            "ce_present": present,
+            # +1 positive, 0 negative; anything else is treated as positive, which is the
+            # majority -- there are exactly two values in both train and test.
+            "polarity": (df.ionization_mode.to_numpy() != "negative").astype(np.float32),
+        }
 
 
 class SpectrumFingerprintSet(Dataset):
     """Spectra with their molecule's fingerprint as target."""
 
     def __init__(self, df: pd.DataFrame, Y: np.ndarray, key_to_row: dict[str, int],
-                 max_peaks: int):
+                 max_peaks: int, cond: Conditioning | None = None):
         self.mzs = df.ms2_mzs.to_numpy()
         self.its = df.ms2_normalized_intensities.to_numpy()
         self.prec = df.precursor_mz.to_numpy(dtype=np.float32)
         self.rows = np.array([key_to_row[k] for k in df.inchikey14], dtype=np.int64)
         self.Y = Y
         self.max_peaks = max_peaks
+        self.cond = cond.encode(df) if cond is not None else None
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -56,23 +97,46 @@ class SpectrumFingerprintSet(Dataset):
 
     def collate(self, idx):
         idx = np.asarray(idx)
-        mz, it, pad = N.collate_spectra(self.mzs[idx], self.its[idx], self.max_peaks,
-                                        precursors=self.prec[idx])
+        # v2 reads the precursor through the global token, so it is not prepended as a
+        # peak; v1 has nowhere else to put it.
+        mz, it, pad = N.collate_spectra(
+            self.mzs[idx], self.its[idx], self.max_peaks,
+            precursors=None if self.cond is not None else self.prec[idx])
         y = torch.from_numpy(self.Y[self.rows[idx]].astype(np.float32))
-        return mz, it, pad, y
+        if self.cond is None:
+            return (mz, it, pad), y
+        c = self.cond
+        extra = (torch.from_numpy(self.prec[idx]),
+                 torch.from_numpy(c["adduct"][idx]),
+                 torch.from_numpy(c["instrument"][idx]),
+                 torch.from_numpy(c["ce"][idx]),
+                 torch.from_numpy(c["ce_present"][idx]),
+                 torch.from_numpy(c["polarity"][idx]))
+        return (mz, it, pad, *extra), y
 
 
 @torch.no_grad()
-def predict_logits(model, df, max_peaks, device, batch: int = 256) -> np.ndarray:
+def predict_logits(model, df, max_peaks, device, cond: Conditioning | None = None,
+                   batch: int = 256) -> np.ndarray:
     model.eval()
     out = []
     mzs, its = df.ms2_mzs.to_numpy(), df.ms2_normalized_intensities.to_numpy()
     prec = df.precursor_mz.to_numpy(dtype=np.float32)
+    enc = cond.encode(df) if cond is not None else None
     for s in range(0, len(df), batch):
         sl = slice(s, min(s + batch, len(df)))
-        mz, it, pad = N.collate_spectra(mzs[sl], its[sl], max_peaks, precursors=prec[sl])
+        mz, it, pad = N.collate_spectra(mzs[sl], its[sl], max_peaks,
+                                        precursors=None if enc else prec[sl])
+        args = [mz.to(device), it.to(device), pad.to(device)]
+        if enc is not None:
+            args += [torch.from_numpy(prec[sl]).to(device),
+                     torch.from_numpy(enc["adduct"][sl]).to(device),
+                     torch.from_numpy(enc["instrument"][sl]).to(device),
+                     torch.from_numpy(enc["ce"][sl]).to(device),
+                     torch.from_numpy(enc["ce_present"][sl]).to(device),
+                     torch.from_numpy(enc["polarity"][sl]).to(device)]
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
-            z = model(mz.to(device), it.to(device), pad.to(device))
+            z = model(*args)
         out.append(z.float().cpu().numpy())
     return np.concatenate(out)
 
@@ -96,9 +160,15 @@ def rank_with_fingerprints(query: pd.DataFrame, logits: np.ndarray,
         cand_fp, cand_keys = bank_fp[lo:hi], bank_keys[lo:hi]
         if scoring == "tanimoto":
             s = FP.tanimoto_dense(probs[rows], cand_fp)          # (n_spectra, n_cand)
+            # Log-sum-exp measured best for pooling a molecule's spectra, and Tanimoto
+            # shares the cosine's [0,1] scale, so the fitted beta transfers.
+            best = SP.pool_logsumexp(s)
         else:
             s = FP.modified_tanimoto_logit(logits[rows], cand_fp).T
-        best = s.max(axis=0)                 # a molecule's spectra vote by maximum
+            # Log-likelihoods are unbounded and on a different scale entirely, where a
+            # beta fitted on [0,1] cosines would saturate. Max until pooling is refitted
+            # for this scoring rule on its own.
+            best = s.max(axis=0)
         ranked, seen = [], set()
         for j in np.argsort(best)[::-1]:
             k = cand_keys[j]
@@ -125,7 +195,17 @@ def main() -> None:
     ap.add_argument("--d-model", type=int, default=512)
     ap.add_argument("--n-layers", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--v2", action="store_true",
+                    help="conditioned model: per-peak neutral loss, a global token "
+                         "carrying precursor/energy/polarity/adduct/instrument, and "
+                         "CLS+mean pooling. Implies --all-instruments unless overridden.")
+    ap.add_argument("--all-instruments", action="store_true",
+                    help="train on all 2.54M spectra rather than the timsTOF half. Only "
+                         "sensible with --v2, which can learn the instrument correction; "
+                         "v1 has no way to tell the instruments apart.")
     args = ap.parse_args()
+    if args.v2 and not args.all_instruments:
+        args.all_instruments = True
 
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -142,8 +222,11 @@ def main() -> None:
 
     cols = ["ingest_lib", "inchikey14", "adduct", "precursor_mz",
             "ms2_mzs", "ms2_normalized_intensities"]
-    print("reading timsTOF spectra ...")
-    tims = D.load_train(columns=cols, timstof_only=True)
+    if args.v2:
+        cols += ["instrument_type", "ionization_mode", "collision_energy_ev"]
+    scope = "all instruments" if args.all_instruments else "timsTOF only"
+    print(f"reading spectra ({scope}) ...")
+    tims = D.load_train(columns=cols, timstof_only=not args.all_instruments)
     train_df = tims[~tims.inchikey14.isin(val_keys)]
     print(f"  {len(train_df):,} training spectra over "
           f"{train_df.inchikey14.nunique():,} molecules (validation molecules excluded)")
@@ -190,14 +273,23 @@ def main() -> None:
     bank_keys = bank.inchikey14.to_numpy(dtype=object)
 
     # ------------------------------------------------------------------ model
-    cfg = N.FPNetConfig(n_bits=len(bits), d_model=args.d_model, n_layers=args.n_layers,
-                        max_peaks=args.max_peaks)
-    model = N.FPNet(cfg).to(device)
+    cond = None
+    if args.v2:
+        cfg = N.FPNetV2Config(n_bits=len(bits), d_model=args.d_model,
+                              n_layers=args.n_layers, max_peaks=args.max_peaks)
+        cond = Conditioning(train_df, cfg.n_adducts, cfg.n_instruments)
+        model = N.FPNetV2(cfg).to(device)
+        print(f"\nconditioning: {len(cond.adduct)} adducts + OOV, "
+              f"{len(cond.instrument)} instruments + OOV")
+    else:
+        cfg = N.FPNetConfig(n_bits=len(bits), d_model=args.d_model,
+                            n_layers=args.n_layers, max_peaks=args.max_peaks)
+        model = N.FPNet(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"\nFPNet: {n_params/1e6:.1f}M parameters, {cfg.n_layers} layers, "
-          f"d_model {cfg.d_model}, {cfg.n_bits:,} output bits")
+    print(f"{'FPNetV2' if args.v2 else 'FPNet'}: {n_params/1e6:.1f}M parameters, "
+          f"{cfg.n_layers} layers, d_model {cfg.d_model}, {cfg.n_bits:,} output bits")
 
-    ds = SpectrumFingerprintSet(train_df, Y, key_to_row, args.max_peaks)
+    ds = SpectrumFingerprintSet(train_df, Y, key_to_row, args.max_peaks, cond)
     dl = DataLoader(ds, batch_size=args.batch, shuffle=True, num_workers=4,
                     collate_fn=ds.collate, drop_last=True, persistent_workers=True)
 
@@ -212,10 +304,11 @@ def main() -> None:
     for epoch in range(args.epochs):
         model.train()
         running, seen, t0 = 0.0, 0, time.time()
-        for step, (mz, it, pad, y) in enumerate(dl):
-            mz, it, pad, y = (t.to(device, non_blocking=True) for t in (mz, it, pad, y))
+        for step, (inputs, y) in enumerate(dl):
+            inputs = tuple(t.to(device, non_blocking=True) for t in inputs)
+            y = y.to(device, non_blocking=True)
             with torch.autocast("cuda", dtype=scaler_dtype, enabled=device.type == "cuda"):
-                loss = loss_fn(model(mz, it, pad), y)
+                loss = loss_fn(model(*inputs), y)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -229,7 +322,10 @@ def main() -> None:
                       f"{seen/(time.time()-t0):.0f} spectra/s", flush=True)
         print(f"  epoch {epoch} done: loss {running/seen:.4f} in {time.time()-t0:.0f}s")
 
-    torch.save({"state_dict": model.state_dict(), "cfg": cfg.__dict__, "bits": bits},
+    torch.save({"state_dict": model.state_dict(), "cfg": cfg.__dict__, "bits": bits,
+                "v2": args.v2,
+                "adduct_vocab": cond.adduct if cond else None,
+                "instrument_vocab": cond.instrument if cond else None},
                odir / "fpnet.pt")
     print(f"\nsaved {odir/'fpnet.pt'}")
 
@@ -237,7 +333,7 @@ def main() -> None:
     print("\n" + "=" * 78)
     print("EVALUATION on the held_out regime — the floor to beat is 0.085 (random)")
     print("=" * 78)
-    logits = predict_logits(model, query, args.max_peaks, device)
+    logits = predict_logits(model, query, args.max_peaks, device, cond)
 
     # Per-bit quality first: a ranking failure could be the model or the scoring rule.
     probs = 1.0 / (1.0 + np.exp(-logits))
