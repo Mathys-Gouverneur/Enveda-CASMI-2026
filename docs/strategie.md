@@ -84,43 +84,52 @@ Each of these is measured, by us or by a competitor who published the number:
 
 ### Done
 
-1. **Metric reimplemented** with the tautomer-canonical identity, 40 tests pinning it.
+1. **Metric reimplemented** with the tautomer-canonical identity; 48 tests pin it.
 2. **Resolution quantified**: ±0.047 on the board; **0.0024** detectable on a
    4,000-molecule paired comparison.
 3. **Validation split** that matches the test profile to within 1.5 points on every axis.
 4. **Pool coverage measured** — and found to be a dead end, which is itself the result.
 5. **Retrieval baseline** with the three brackets: 0.085 random, 0.650 in-library.
 6. **Adduct parser** recovering 29 % more reference spectra, and a 1.8 ppm bug fixed.
+7. **Formula identification from fragments** — 51.5 % top-1, capturing **30 %** of the
+   formula prize, and only as a soft ordering: a hard gate needs 41 % accuracy merely to
+   break even. The score belongs in a ranker as a feature, not in front of it as a filter.
+8. **The two retrieval constants fitted** rather than guessed: neutral losses weight **0**
+   (the 0.5 placeholder was costing 0.0036) and **log-sum-exp** pooling over a molecule's
+   spectra rather than the maximum. +0.0066 ± 0.0039 paired — an effect no submission
+   could see.
+
+### In flight
+
+**FPNet**, the spectrum → fingerprint predictor, training on all 1,129,508 timsTOF
+spectra excluding validation molecules. 32.2 M parameters, 5,716 output bits, 10 epochs at
+~26 min each. Evaluated on the `held_out` split against the 0.085 random floor — the first
+method that can score at all in the regime the test actually poses.
 
 ### Next, in order
 
-1. **A spectrum → fingerprint predictor trained on the timsTOF half.** This is the pivot:
-   it scores a candidate the library has no spectrum for, which is the regime the test is
-   in and where retrieval scores zero. 1.15 M in-domain spectra, 183 k molecules, and
-   nobody else is training on them because the tutorial's filter removed them.
-   Measured against the 0.085 floor on the `held_out` split.
+1. **Learned cross-instrument similarity.** The 2,288 molecules measured on both
+   instruments are a supervised dataset for it; the 183 k molecules × multiple collision
+   energies are a much larger contrastive one. Unexploited, as far as the public record
+   shows. Needs the GPU, so it queues behind FPNet.
 
-2. **Same-formula reranking.** ~90 % of a window shares the answer's formula, so this is
-   where the remaining score is. Needs a signal that sees *how* a molecule breaks, not
-   just what it is made of — fragment-formula annotation first, since it is cheap and
-   licence-free, then forward simulators from upstream checkpoints.
+2. **Compose the signals.** Formula ordering, FPNet fingerprint agreement and spectral
+   similarity are three independent views of the same candidate list. Whether they add or
+   overlap is an open question, and the harness can answer it to ±0.001. The formula
+   measurement predicts they should compose: formula says *what the molecule is made of*,
+   FPNet says *which substructures it contains*, and neither sees *how it breaks*.
 
-3. **Learned cross-instrument similarity.** The 2,288 molecules measured on both
-   instruments are a supervised dataset for it, and the 183 k molecules × multiple
-   collision energies are a much larger contrastive one. Unexploited by anyone, as far as
-   the public record shows.
+3. **Same-formula isomer separation**, the part nothing above touches. 34 candidates
+   remain in the median true-formula group. This needs a signal that sees fragmentation
+   mechanism — forward simulators, obtained from their upstream releases rather than the
+   licence-undeclared Kaggle repackagings.
 
-4. **Multi-spectrum fusion.** Three spectra per molecule at different collision energies.
-   The current baseline pools them by taking each candidate's best score, which is a
-   placeholder, not a method.
-
-5. **Rebuild the candidate bank from upstream** (COCONUT CC BY, ChEBI CC BY, PubChemLite
+4. **Rebuild the candidate bank from upstream** (COCONUT CC BY, ChEBI CC BY, PubChemLite
    CC0) — not for recall, which we have shown it does not add, but so that nothing in the
    pipeline traces back to an NC source, and so that gating decisions are ours.
 
-6. **A first submission** early, to calibrate our local numbers against the board. One
-   submission is worth little as a measurement (±0.047) but a lot as a check that the
-   offline and online pipelines agree.
+5. **A first submission**, to check that the offline and online pipelines agree. Worth
+   little as a measurement (±0.047), a lot as a wiring check.
 
 ### What would falsify this
 
