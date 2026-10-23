@@ -1,0 +1,38 @@
+{
+  "id": "seyitkaangunes/casmi26-e006-n1a-cc-by-chebi-lb-0-452",
+  "id_no": 138747341,
+  "title": "CASMI26 | E006 + N1A + CC BY ChEBI | LB 0.452",
+  "code_file": "casmi26-e006-n1a-cc-by-chebi-lb-0-452.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [
+    "prvsiyan/casmi26-ranker-features",
+    "prvsiyan/casmi26-fp-models-v2",
+    "dmitriigluzdov/casmi26-pubchem-popularity-prior",
+    "megayak/casmi26-simulated-ranker-rows",
+    "ahmedberatozer/casmi26-fpnet-full1",
+    "ahmedberatozer/casmi26-glacier",
+    "ahmedberatozer/casmi26-iceberg",
+    "ahmedberatozer/casmi26-pubchem-tier",
+    "ahmedberatozer/casmi26-v2-pool",
+    "ahmedberatozer/casmi26-v3-models",
+    "ahmedberatozer/casmi26-v4b-models",
+    "sergiomalv/casmi-chebi-lmsd-structures",
+    "prvsiyan/coconut-casmi26-candidates",
+    "hengck23/hengck23-dreams-enveda-casmi26",
+    "metric/rdkit-2026-3-3-wheel",
+    "eveliaveldrine/rdkit-wheels"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "enveda-CASMI26-molecule-id-mass-spectra"
+  ],
+  "model_sources": []
+}

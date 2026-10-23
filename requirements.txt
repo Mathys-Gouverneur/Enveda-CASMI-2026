@@ -1,0 +1,41 @@
+# Local development dependencies for the Enveda CASMI 2026 work.
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# This project keeps its own venv rather than borrowing RSNA-project's: that one is
+# pinned to a CUDA torch build for knee MRI, and nothing here needs it.
+
+# --- the data itself -------------------------------------------------------------
+# Three parquet files, 3 GB. pyarrow reads them; the corpus fits in RAM on this box,
+# so there is no streaming layer to build.
+numpy
+pandas
+pyarrow
+
+# --- chemistry ------------------------------------------------------------------
+# RDKit is the whole game: SMILES parsing, canonicalisation, InChIKey, Morgan
+# fingerprints, formula and exact-mass arithmetic. The competition metric compares
+# structures, so every candidate has to pass through it.
+rdkit
+# Mass-spectrometry side: spectrum objects, peak filtering, and the cosine /
+# modified-cosine similarities that every public baseline is built on. Pulls its own
+# pinned numpy range, so install it in the same pass as numpy rather than after.
+matchms
+
+# --- modelling ------------------------------------------------------------------
+scikit-learn
+scipy
+# CPU build on purpose. Training happens on Kaggle or on a GPU box; torch is here to
+# run tests and shapes locally without a 2 GB CUDA download.
+# If a GPU build is ever needed here:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+torch
+
+# --- workflow -------------------------------------------------------------------
+tqdm
+matplotlib
+jupyter
+ipykernel
+# Pulls competition data and public kernels. Authenticated from ~/.kaggle/kaggle.json,
+# which is already in place.
+kaggle

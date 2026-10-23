@@ -1,0 +1,24 @@
+{
+  "id": "dariushafshar/casmi26-10-4-of-keys-change-0-48-cost-you",
+  "id_no": 135021875,
+  "title": "CASMI26: 10.4% of Keys Change, 0.48% Cost You",
+  "code_file": "casmi26-10-4-of-keys-change-0-48-cost-you.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "chemistry",
+    "biology"
+  ],
+  "dataset_sources": [
+    "dariushafshar/casmi26-coconut-scorer-keys-rdkit-2026-03-3"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "enveda-CASMI26-molecule-id-mass-spectra"
+  ],
+  "model_sources": []
+}

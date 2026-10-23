@@ -1,0 +1,21 @@
+{
+  "id": "inversion/casmi-denovo-tutorial-notebook",
+  "id_no": 134328238,
+  "title": "CASMI denovo tutorial notebook",
+  "code_file": "casmi-denovo-tutorial-notebook.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "enveda-CASMI26-molecule-id-mass-spectra"
+  ],
+  "model_sources": []
+}

@@ -1,0 +1,28 @@
+{
+  "id": "mayankraaz/0-458-sota-spectraforge-apex-synthesis",
+  "id_no": 139279367,
+  "title": "\u26a1 0.458+ SOTA | SpectraForge Apex Synthesis",
+  "code_file": "0-458-sota-spectraforge-apex-synthesis.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "gpu",
+    "chemistry",
+    "biology"
+  ],
+  "dataset_sources": [
+    "dmitriigluzdov/casmi26-natural-product-knowledge-table",
+    "dmitriigluzdov/casmi26-natural-product-panel-benchmark",
+    "dmitriigluzdov/casmi26-pubchem-popularity-prior",
+    "dmitriigluzdov/casmi26-attributed-v4g-reproduction-assets"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "enveda-CASMI26-molecule-id-mass-spectra"
+  ],
+  "model_sources": []
+}

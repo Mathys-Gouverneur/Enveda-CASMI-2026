@@ -1,0 +1,19 @@
+{
+  "id": "alexchilton/casmi26-public-lineage-0-34-to-0-44",
+  "id_no": 138010837,
+  "title": "CASMI26 public lineage: 0.34 to 0.44",
+  "code_file": "casmi26-public-lineage-0-34-to-0-44.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "enveda-CASMI26-molecule-id-mass-spectra"
+  ],
+  "model_sources": []
+}

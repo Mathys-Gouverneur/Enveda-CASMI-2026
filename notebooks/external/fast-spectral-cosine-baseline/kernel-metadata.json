@@ -1,0 +1,30 @@
+{
+  "id": "haideptry/enveda-casmi-2026-fast-spectral-cosine-baseline",
+  "id_no": 134422735,
+  "title": "Enveda CASMI 2026 - Fast Spectral Cosine Baseline",
+  "code_file": "enveda-casmi-2026-fast-spectral-cosine-baseline.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "chemistry",
+    "biology",
+    "gpu"
+  ],
+  "dataset_sources": [
+    "prvsiyan/casmi26-ranker-features",
+    "prvsiyan/casmi26-fp-models-v2",
+    "aidensong123/casmi26-offline-rdkit-2026033",
+    "prvsiyan/chebi-lipidmaps-casmi26",
+    "prvsiyan/coconut-casmi26-candidates",
+    "thedevastator/open-source-natural-product-annotations"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "enveda-CASMI26-molecule-id-mass-spectra"
+  ],
+  "model_sources": []
+}
