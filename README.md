@@ -23,6 +23,9 @@ ignored, and because `1/rank` decays fast, [the entire tail below rank 3 is wort
 |---|---|
 | [`docs/competition.md`](docs/competition.md) | The task, the data columns, the metric's exact identity rule, and the licence rulings that can get a solution disqualified |
 | [`docs/public-meta.md`](docs/public-meta.md) | What the leaderboard is actually doing, the six mechanisms the gains cluster around, the documented nulls, and the candidate angles |
+| [`docs/measurement.md`](docs/measurement.md) | What we can tell apart, and what the task measurably is |
+| [`docs/leviers.md`](docs/leviers.md) | Every lever that could gain points, what each is worth, and the measured nulls |
+| [`docs/strategie.md`](docs/strategie.md) | The plan, the licence constraint, and what would falsify it |
 | [`notebooks/external/README.md`](notebooks/external/README.md) | The 17 vendored public notebooks, with vote counts and why each is kept |
 
 Two facts from those documents worth having before anything else:

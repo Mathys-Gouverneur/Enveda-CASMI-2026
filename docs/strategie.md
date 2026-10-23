@@ -1,5 +1,7 @@
 # Strategy
 
+Full inventory of levers, with what each is worth: [`leviers.md`](leviers.md).
+
 Written 2026-10-23, after the measurements in [`measurement.md`](measurement.md). Those
 measurements changed the plan twice, so this document states what we now believe and
 what would have to be false for it to be wrong.
