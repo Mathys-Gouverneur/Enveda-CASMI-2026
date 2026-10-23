@@ -91,11 +91,18 @@ def cosine(Q: sp.csr_matrix, R: sp.csr_matrix, block: int = 2048) -> np.ndarray:
 
 
 def combined_similarity(query: pd.DataFrame, reference: pd.DataFrame,
-                        loss_weight: float = 0.5, **kw) -> np.ndarray:
+                        loss_weight: float = 0.0, **kw) -> np.ndarray:
     """Fragment cosine plus `loss_weight` x neutral-loss cosine.
 
-    `loss_weight` is a free parameter and must be fitted on a validation split, never
-    guessed — the default is a placeholder, not a recommendation.
+    **Default 0, measured.** `scripts/tune_retrieval.py` swept this on 4,000 validation
+    molecules: MRR falls monotonically as the weight rises, for every fusion rule, and
+    the earlier placeholder of 0.5 cost 0.0036.
+
+    That verdict is scoped to same-molecule retrieval, which is what the `in_library`
+    split measures — there the fragment cosine already matches the answer almost exactly
+    and the loss view only adds noise. Neutral losses exist to match *analogues*, which
+    is the `held_out` regime where retrieval scores 0 and the experiment is blind. Refit
+    this once a ranker scores in that regime.
     """
     s = cosine(bin_spectra(query, "fragment", **kw), bin_spectra(reference, "fragment", **kw))
     if loss_weight:
@@ -104,21 +111,35 @@ def combined_similarity(query: pd.DataFrame, reference: pd.DataFrame,
     return s
 
 
+#: Sharpness of the log-sum-exp pooling. Soft enough to credit agreement across a
+#: molecule's spectra, sharp enough to stay dominated by its best match.
+LSE_BETA = 8.0
+
+
+def pool_logsumexp(sim: np.ndarray) -> np.ndarray:
+    """Soft maximum over a molecule's spectra, the measured-best fusion rule."""
+    return np.log(np.exp(sim * LSE_BETA).sum(axis=0)) / LSE_BETA
+
+
 def best_per_molecule(sim: np.ndarray, query_molecule: np.ndarray,
-                      reference_key: np.ndarray, n_keep: int = 25
-                      ) -> dict[str, list[tuple[str, float]]]:
+                      reference_key: np.ndarray, n_keep: int = 25,
+                      fusion=pool_logsumexp) -> dict[str, list[tuple[str, float]]]:
     """Pool a molecule's spectra into one ranked candidate list.
 
-    Scoring is per molecule, so the several spectra of one molecule have to vote
-    together. A candidate's score is the **maximum** over the molecule's spectra, not the
-    mean: a molecule is measured at several collision energies and a reference recorded
-    at one of them will legitimately match a single query spectrum well and the others
-    poorly. Averaging would punish exactly the right answer.
+    Scoring is per molecule, so a molecule's several spectra have to vote together.
+
+    The default is **log-sum-exp**, not the maximum, because that is what measured best:
+    `scripts/tune_retrieval.py` on 4,000 molecules gives 0.6562 against 0.6509 for max,
+    0.6456 for mean/sum and 0.6122 for reciprocal-rank fusion. The reasoning for taking a
+    maximum was sound — a reference recorded at one collision energy matches one query
+    spectrum well and the others poorly, so averaging punishes the right answer — but a
+    soft maximum keeps that property while still crediting a candidate that matches
+    several of the molecule's spectra.
     """
     results: dict[str, list[tuple[str, float]]] = {}
     for mol in pd.unique(query_molecule):
         block = sim[query_molecule == mol]
-        best = block.max(axis=0)
+        best = fusion(block)
         # Collapse references that are the same structure, keeping its best score.
         order = np.argsort(best)[::-1]
         seen: dict[str, float] = {}

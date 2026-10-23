@@ -224,3 +224,27 @@ def test_adjusted_score_prefers_the_true_formula():
     ranked = FO.rank_formulas(s.ms2_mzs, s.ms2_normalized_intensities, s.precursor_mz,
                               ["C8H10N4O2", "C7H14O6"])
     assert ranked[0][0] == "C8H10N4O2"
+
+
+def test_logsumexp_pooling_is_a_soft_maximum_from_above():
+    """log-sum-exp brackets the maximum from above, by at most log(n)/beta.
+
+    Not from below: `lse = max + log(sum exp(beta*(s-max)))/beta >= max` always. Getting
+    that backwards is what the first version of this test asserted.
+    """
+    s = np.array([[0.9, 0.1], [0.2, 0.1], [0.1, 0.1]], dtype=float)
+    lse = SP.pool_logsumexp(s)
+    mx, mean = s.max(axis=0), s.mean(axis=0)
+    slack = np.log(s.shape[0]) / SP.LSE_BETA
+    assert np.all(lse >= mx - 1e-9)
+    assert np.all(lse <= mx + slack + 1e-9)
+    assert np.all(lse > mean)
+    # The agreeing column (all three equal) takes the full slack; the peaked one barely any.
+    assert (lse[1] - mx[1]) > (lse[0] - mx[0])
+
+
+def test_best_per_molecule_dedups_and_caps():
+    sim = np.array([[0.9, 0.8, 0.7]], dtype=float)
+    out = SP.best_per_molecule(sim, np.array(["m"], dtype=object),
+                               np.array(["A", "A", "B"], dtype=object), n_keep=5)
+    assert [k for k, _ in out["m"]] == ["A", "B"]

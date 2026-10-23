@@ -223,7 +223,45 @@ masses cannot drift and costs at most a few hundred thousand floats in this mass
 11 ms for `C30H50N5O10S2`. Two tests now assert that a formula contains its own parts and
 nothing more.
 
-## 7. Metric reimplementation
+## 7. The two retrieval constants, fitted instead of guessed
+
+`scripts/tune_retrieval.py`, swept on the 4,000-molecule `in_library` split. Both of these
+were placeholders in the first baseline, with comments saying so.
+
+**MRR by neutral-loss weight × fusion rule:**
+
+| loss weight | logsumexp | max | mean | sum | rrf |
+|---|---|---|---|---|---|
+| **0.00** | **0.6562** | 0.6509 | 0.6456 | 0.6456 | 0.6122 |
+| 0.25 | 0.6540 | 0.6507 | 0.6464 | 0.6464 | 0.6110 |
+| 0.50 | 0.6532 | 0.6496 | 0.6462 | 0.6462 | 0.6113 |
+| 1.00 | 0.6480 | 0.6452 | 0.6437 | 0.6437 | 0.6078 |
+| 2.00 | 0.6433 | 0.6419 | 0.6402 | 0.6402 | 0.6023 |
+
+- **The neutral-loss view does not help; it hurts.** Weight 0 wins for every fusion rule
+  and MRR falls monotonically as the weight rises. The 0.5 placeholder cost 0.0036.
+- **Log-sum-exp beats the maximum** (0.6562 vs 0.6509). The argument for the maximum was
+  sound — a reference recorded at one collision energy matches one query spectrum and not
+  the others, so averaging punishes the right answer — and a soft maximum keeps that while
+  still crediting a candidate that matches several of a molecule's spectra. Plain mean and
+  sum are worse, and reciprocal-rank fusion is clearly worst here, which is worth noting
+  because RRF is the public stack's blending tool of choice.
+- Combined against the placeholders: **+0.0066 ± 0.0039** (95 %, paired, n = 4,000) →
+  real.
+
+That last line is the measurement thesis in one number. An effect of 0.0066 is invisible
+to a leaderboard submission (±0.047) and comfortably resolved by a paired offline
+comparison. The harness paid for itself here.
+
+**Scope, which matters.** This is the `in_library` regime, where the correct answer is the
+same molecule at another collision energy, so the fragment cosine already matches it
+almost exactly. Neutral losses exist to match *analogues* — a molecule and its methylated
+derivative share losses but not fragment masses — which is the `held_out` regime, where
+retrieval scores 0 and this experiment is blind. Read it as "neutral losses do not help
+same-molecule retrieval", not as "neutral losses are useless". The fusion-rule ranking
+should transfer; the loss weight must be refitted once a ranker scores in `held_out`.
+
+## 8. Metric reimplementation
 
 `src/casmi/metric.py`, 40 tests in `tests/test_casmi.py`. The three rules that decide
 whether a local number matches the board:
