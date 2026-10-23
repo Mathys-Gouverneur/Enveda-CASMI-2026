@@ -24,3 +24,6 @@ models/
 out/
 *.ckpt
 submission*.csv
+
+# Installed in editable mode, so setuptools leaves this behind.
+*.egg-info/

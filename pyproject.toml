@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "casmi"
+version = "0.1.0"
+description = "Enveda CASMI 2026: molecule identification from MS/MS spectra"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Installed with `pip install -e .` so `import casmi` works from scripts, notebooks and
+# tests without any sys.path handling. Dependencies stay in requirements.txt rather than
+# here: this is a competition workspace, not a library anyone installs from an index, and
+# the torch build in particular has to come from a specific index URL.
