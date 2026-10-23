@@ -67,8 +67,12 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-Python 3.10.12, and the stack verified working: numpy 2.2.6, pandas 2.3.3, pyarrow 25.0.1,
-**rdkit 2026.09.1**, matchms 0.33.1, scikit-learn 1.7.2, torch 2.14.1+cpu.
+Then `pip install -e .` so `import casmi` resolves, and `python -m pytest tests -q`
+(48 tests, ~16 s) to check the install.
+
+Python 3.10.12, stack verified working: numpy 2.2.6, pandas 2.3.3, pyarrow 25.0.1,
+**rdkit 2026.09.1**, matchms 0.33.1, scikit-learn 1.7.2, **torch 2.14.1+cu126** on the
+box's NVIDIA L40 (47.6 GB). See `requirements.txt` for the two pip traps that build hides.
 
 RDKit's version is a trap worth knowing about: the public field pins **2026.03.3** in
 submission notebooks, because a Python 3.12-vs-3.13 wheel mismatch *silently zeroed*
@@ -81,33 +85,39 @@ RSNA-project's, which is pinned to a CUDA torch build nothing here needs.
 
 ## State, 2026-10-23
 
-Done:
+The task, as measured rather than assumed: **rank ~78 same-mass candidates, of which ~34
+share the right answer's molecular formula, for a molecule whose spectrum the library has
+never seen.** Floor 0.085 at random; best verified public stack 0.433.
 
-- repository, venv, chemistry stack, directory layout
-- `/data/mgr/enveda-casmi/` mode `700` — `drwx------`, same as `/data/mgr/rsna-knee`
-- all three competition files downloaded, schemas and submission format documented
-- 17 public notebooks vendored and indexed; the public meta read and written up
-- the instrument-gap finding above, measured
+| | |
+|---|---|
+| metric reimplemented, tautomer-canonical, 48 tests | ✅ |
+| resolution quantified — **±0.047** on the board, **0.0024** paired on 4,000 molecules | ✅ |
+| validation split matching the test profile within 1.5 pts on every axis | ✅ |
+| pool coverage — a measured dead end, which is the result | ✅ |
+| retrieval baseline, three brackets | ✅ |
+| adduct parser — +29 % reference spectra, a 1.8 ppm bug fixed | ✅ |
+| formula identification — 51.5 % top-1, **30 %** of its prize, soft ordering only | ✅ |
+| the two retrieval constants fitted — **+0.0066 ± 0.0039** paired | ✅ |
+| FPNet, spectrum → fingerprint, 32.2 M params on 1.13 M timsTOF spectra | 🔄 training |
+| learned cross-instrument similarity | ⏳ queued behind the GPU |
 
-Nothing is blocked.
+Entry points: `scripts/noise_floor.py`, `build_splits.py`, `eval_baseline.py`,
+`eval_formula.py`, `tune_retrieval.py`, `train_fpnet.py`.
 
 ## Next
 
-**Size the instrument gap.** Hold out timsTOF molecules, then compare retrieval accuracy
-with public-library references against Enveda references. One number, and it decides
-whether the gap is the opening or a curiosity.
+The ordered list with values attached is [`docs/leviers.md`](docs/leviers.md). The top of
+it, after reading the public FPNet's actual code: **condition the model on instrument,
+adduct and collision energy** and train on all 2.54 M spectra, rather than discarding 55 %
+of the corpus for domain purity as the current run does.
 
-It matters because of how this leaderboard is shaped: 400 test molecules means
-[one molecule is worth 0.0025](docs/public-meta.md#where-the-headroom-is), ranks 9–16 all
-sit inside 0.004, and every constant in the public stack was fitted by submission against
-those same 400. A trustworthy offline measurement is worth more here than any single
-mechanism — and a timsTOF-only held-out split is both test-faithful and far larger than
-the public LB everyone is tuning against.
+### Open questions, recorded before they get forgotten
 
-Open questions worth recording now, before they get forgotten:
-
-- Are the test molecules actually *drawn from* `enveda-180`? Not established.
-- What does a cosine match lose across the instrument gap? Not measured.
-- `test.parquet` has no `molecular_formula` column; train does. Formula has to come from
-  precursor + adduct, and same-formula isomer separation is where the public stack spends
-  most of its effort.
+- Are the test molecules actually *drawn from* `enveda-180`? Not established — it is an
+  inference from the 0.3 % coverage figure plus the board sitting at 0.50, and the whole
+  plan rests on it. The first submission is the cheapest check.
+- Do formula, fingerprint and spectral signals **add or overlap**? Open, and the harness
+  can answer it to ±0.001.
+- What separates the 34 same-formula isomers? Nothing built so far touches this, and it is
+  where the residual score lives.
