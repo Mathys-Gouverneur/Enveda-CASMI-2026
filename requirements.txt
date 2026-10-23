@@ -25,11 +25,19 @@ matchms
 # --- modelling ------------------------------------------------------------------
 scikit-learn
 scipy
-# CPU build on purpose. Training happens on Kaggle or on a GPU box; torch is here to
-# run tests and shapes locally without a 2 GB CUDA download.
-# If a GPU build is ever needed here:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu126
-torch
+# GPU build, because FPNet trains here: this box has an NVIDIA L40 (47.6 GB) behind
+# driver 535 / CUDA 12.1, and the cu126 wheels run on it through CUDA minor-version
+# compatibility. Install it from the PyTorch index, not PyPI:
+#
+#   pip install --index-url https://download.pytorch.org/whl/cu126 \
+#       --extra-index-url https://pypi.org/simple "torch==2.14.1+cu126"
+#
+# Two traps met getting there. A bare `pip install torch --index-url .../cu121` is a
+# no-op when a *newer* CPU build is already present (2.14.1+cpu outranks 2.5.1+cu121),
+# so pin the exact `+cu126` version. And `--no-deps` installs the wheel without the
+# nvidia-* runtime packages, which then fails at import with
+# `libcudnn.so.9: cannot open shared object file`.
+torch==2.14.1+cu126
 
 # --- workflow -------------------------------------------------------------------
 tqdm

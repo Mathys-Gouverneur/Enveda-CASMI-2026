@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./.venv/bin/python -c ' *)",
+      "Read(//usr/local/**)",
+      "Read(//proc/driver/nvidia/**)",
+      "Read(//dev/**)"
+    ]
+  }
+}
