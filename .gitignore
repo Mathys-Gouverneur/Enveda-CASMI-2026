@@ -27,3 +27,6 @@ submission*.csv
 
 # Installed in editable mode, so setuptools leaves this behind.
 *.egg-info/
+
+# Left by scripts/rehearse_kernel.py when it exercises the zip mount shape.
+/lib/

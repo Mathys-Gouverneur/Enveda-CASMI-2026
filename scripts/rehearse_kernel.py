@@ -27,12 +27,24 @@ from casmi import data as D
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def stage_mounts(into: Path) -> None:
-    """One directory per dataset, as Kaggle lays them out."""
+def stage_mounts(into: Path, shape: str = "expanded") -> None:
+    """One directory per dataset, as Kaggle lays them out.
+
+    Both library shapes have to be rehearsed, because which one arrives is Kaggle's
+    decision: `kaggle_dataset.py` uploads with `-r zip`, so the dataset holds
+    `casmi.zip`, and Kaggle may serve that as-is or expand it. The notebook handles
+    both; only testing one leaves the other to fail in a queued run.
+    """
     src = into / "casmi-src"
     src.mkdir(parents=True)
-    shutil.copytree(ROOT / "src" / "casmi", src / "casmi",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    if shape == "zip":
+        import zipfile
+        with zipfile.ZipFile(src / "casmi.zip", "w") as z:
+            for f in sorted((ROOT / "src" / "casmi").rglob("*.py")):
+                z.write(f, Path("casmi") / f.relative_to(ROOT / "src" / "casmi"))
+    else:
+        shutil.copytree(ROOT / "src" / "casmi", src / "casmi",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
     comp = into / "enveda-CASMI26-molecule-id-mass-spectra"
     comp.mkdir(parents=True)
@@ -46,6 +58,10 @@ def stage_mounts(into: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--kernel-dir", default="kaggle/analog-baseline", type=Path)
+    ap.add_argument("--shape", choices=("expanded", "zip"), default="expanded",
+                    help="which library mount shape to fake")
+    ap.add_argument("--bootstrap-only", action="store_true",
+                    help="run only the mount-finding and import cells")
     ap.add_argument("--limit", type=int, default=5,
                     help="test molecules to actually rank")
     args = ap.parse_args()
@@ -61,7 +77,7 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="casmi-rehearse-") as tmp:
         mounts = Path(tmp)
-        stage_mounts(mounts)
+        stage_mounts(mounts, args.shape)
         os.environ["KAGGLE_INPUT"] = str(mounts)
         print(f"  faked mounts at {mounts}\n")
 
@@ -79,6 +95,9 @@ def main() -> None:
             # actually produced. The real run checks against all 400.
             source = source.replace("S.check_submission(submission, test_ids)",
                                     "S.check_submission(submission, submission.molecule_id)")
+            if args.bootstrap_only and "run_submission" in source:
+                print("(stopping before the pipeline cell)")
+                break
             print(f"----- cell {i} -----", flush=True)
             exec(compile(source, f"<cell {i}>", "exec"), scope)
 
