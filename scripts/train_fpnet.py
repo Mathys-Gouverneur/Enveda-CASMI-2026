@@ -195,6 +195,16 @@ def main() -> None:
     ap.add_argument("--d-model", type=int, default=512)
     ap.add_argument("--n-layers", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--train-family-ceiling", type=float, default=1.0,
+                    help="exclude from TRAINING every molecule whose structural Tanimoto "
+                         "to a validation molecule reaches this. 1.0 excludes only the "
+                         "validation molecules themselves, which is the default and "
+                         "leaves their chemical families in the training set")
+    ap.add_argument("--train-random-control", action="store_true",
+                    help="instead of excluding relatives, exclude the same NUMBER of "
+                         "molecules at random. The control that separates the family "
+                         "effect from the plain loss of training data")
+    ap.add_argument("--neighbours", default=str(D.PROCESSED / "neighbours.npz"))
     ap.add_argument("--n-select", type=int, default=800,
                     help="validation molecules reserved for picking the epoch; the rest "
                          "are reported and never consulted during training")
@@ -231,6 +241,38 @@ def main() -> None:
     print(f"reading spectra ({scope}) ...")
     tims = D.load_train(columns=cols, timstof_only=not args.all_instruments)
     train_df = tims[~tims.inchikey14.isin(val_keys)]
+
+    # Family-disjoint training. Excluding the validation molecules alone leaves their
+    # relatives in, and `docs/measurement.md` section 9 showed that is worth ~0.26 to any
+    # method that leans on structural neighbourhood -- FPNet included, less directly,
+    # since it learns the mapping from a relative's spectrum to a nearly identical
+    # fingerprint.
+    #
+    # The random control matters as much as the treatment: excluding relatives also
+    # removes a large slice of the training data, so a drop could be the family effect or
+    # could be the missing data. Removing the same NUMBER of molecules at random
+    # separates them.
+    if args.train_family_ceiling < 1.0 or args.train_random_control:
+        nz = np.load(args.neighbours, allow_pickle=True)
+        vk, bkk, rr_, cc_, tt_ = (nz["val_keys"], nz["bank_keys"], nz["row"],
+                                  nz["col"], nz["tanimoto"])
+        hit = tt_ >= args.train_family_ceiling
+        relatives = {str(bkk[c]) for c in np.unique(cc_[hit])} - val_keys
+        if args.train_random_control:
+            pool = np.array(sorted(set(train_df.inchikey14.unique()) - val_keys),
+                            dtype=object)
+            n = min(len(relatives), len(pool))
+            dropped = set(np.random.default_rng(args.seed).choice(pool, n, replace=False))
+            label = f"random control, {n:,} molecules"
+        else:
+            dropped = relatives
+            label = (f"relatives at Tanimoto >= {args.train_family_ceiling}, "
+                     f"{len(dropped):,} molecules")
+        before = len(train_df)
+        train_df = train_df[~train_df.inchikey14.isin(dropped)]
+        print(f"  family exclusion ({label}): {before:,} -> {len(train_df):,} spectra "
+              f"({(1 - len(train_df)/before)*100:.1f} % removed), "
+              f"{train_df.inchikey14.nunique():,} molecules remain")
     print(f"  {len(train_df):,} training spectra over "
           f"{train_df.inchikey14.nunique():,} molecules (validation molecules excluded)")
     if len(train_df) > args.max_train_spectra:

@@ -100,3 +100,31 @@ Three caveats, all of which make the number *conservative* except the second:
 | Sub-formula reachability on a 1 mDa grid accumulated rounding along the sum, so caffeine's own formula landed 2 mDa from its exact mass. Exact float enumeration instead. |
 | The formula score as a *hard gate* needs 41 % accuracy merely to break even and captures 4 % of its prize; as a **soft ordering** it captures 30 %. Confirmed against a strong ranker at all seven ceilings. |
 | Our validation split was optimistic by ~0.26 because splitting by molecule leaves whole chemical families intact. The ceiling knob exists to fix that. |
+
+## Queued: how much of FPNet's score is family overlap?
+
+FPNet trains on the validation molecules' relatives, so its contribution is the one
+measured number that is **optimistic** rather than conservative. The family ceiling can be
+applied to the *training set* instead of at scoring time
+(`train_fpnet.py --train-family-ceiling`), but the cost has to be accounted for:
+
+| training ceiling | molecules excluded | timsTOF spectra left |
+|---|---|---|
+| 1.00 — what v1 and v2 trained on | 0 | 1,129,508 (98 %) |
+| 0.80 | 3,878 | 1,105,505 (96 %) |
+| 0.70 | 14,869 | 1,038,027 (90 %) |
+| **0.60** | 48,938 | **838,355 (73 %)** |
+| 0.50 | 133,442 | 377,532 (**33 %**) |
+
+Excluding relatives at 0.50 removes **two thirds of the in-domain data**, so any drop
+would be indistinguishable from simply having less to learn from. Hence two decisions:
+
+- **Ceiling 0.60**, which keeps 73 % of the timsTOF spectra — aggressive enough to break
+  the families, cheap enough to interpret.
+- **A matched random control** (`--train-random-control`), which drops the same *number*
+  of molecules at random. The treatment-minus-control difference is the family effect;
+  the control-minus-baseline difference is the cost of the missing data. Without it the
+  experiment answers neither question.
+
+Run with a cheaper configuration than production — only the *contrast* between the three
+arms matters, and a smaller model measures a contrast for a third of the GPU time.
