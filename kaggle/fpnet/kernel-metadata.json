@@ -1,6 +1,6 @@
 {
- "id": "mathysgouverneur/casmi-fpnet",
- "title": "CASMI fpnet",
+ "id": "mathysgouverneur/casmi-fpnet-submit",
+ "title": "CASMI fpnet submit",
  "code_file": "notebook.ipynb",
  "language": "python",
  "kernel_type": "notebook",
