@@ -278,3 +278,86 @@ One caveat on the numbers above: the retrieval evaluation compares raw `inchikey
 both sides, which is self-consistent because both come from `train.parquet`. Tautomer
 canonicalisation becomes mandatory the moment an external database's keys enter the
 comparison, since those were computed by someone else.
+
+## 9. Analogue propagation, and the split bug it exposed
+
+`src/casmi/analog.py`, `scripts/eval_analog.py`. This section corrects an error in the
+validation design above, so read it before trusting any number that depends on the
+spectral library.
+
+### The mechanism
+
+In the `held_out` regime the molecule has no reference spectrum, so direct retrieval
+scores 0. Analogue propagation reaches it anyway: match the query against the **whole**
+library, take the best-matching *other* molecules, and rank mass-window candidates by
+structural similarity to those. This is the root of the entire public lineage.
+
+Measured on 200 validation molecules, `top_k = 10`, `p = 3`:
+
+| | MRR |
+|---|---|
+| random over the mass window | 0.077 |
+| formula soft ordering | 0.116 |
+| **analogue propagation** | **0.714** |
+| analogue + formula (hard formula-group ordering first) | 0.402 |
+
+The last row is the hard-gate lesson again: ordering by formula group *first* pushes the
+true answer behind an entire wrong group whenever the formula call is wrong, which costs
+more than the formula signal adds. Formula has to be a feature beside the analogue score,
+not a sort key before it.
+
+### 0.714 is not a leak, and that is the problem
+
+0.714 is higher than our `in_library` cosine bracket (0.650) and far above the best
+verified public stack (0.433), so it demanded an explanation before it could be believed.
+
+The first hypothesis — structural near-duplicates hiding behind different InChIKey-14
+values — is **wrong**. Measured over the 200 molecules, the best analogue's structural
+Tanimoto to the true answer tops out at 0.964, only 1.5 % exceed 0.95, and none exceeds
+0.99. There are no duplicates.
+
+What the diagnostic found instead: the library is **densely populated with close
+relatives**. Median structural Tanimoto to the best analogue is **0.72**, and median
+spectral cosine to it is **0.887**. Enveda measured families of related natural products,
+so nearly every validation molecule has a distinct but near-identical cousin in train.
+
+Stratifying by that similarity explains the whole number:
+
+| structural Tanimoto to the best available analogue | n | MRR | top-1 |
+|---|---|---|---|
+| ≤ 0.40 | 28 | **0.273** | 10.7 % |
+| 0.40–0.50 | 18 | 0.729 | 61.1 % |
+| 0.50–0.60 | 24 | 0.623 | 45.8 % |
+| 0.60–0.70 | 26 | 0.815 | 65.4 % |
+| 0.70–0.80 | 44 | 0.888 | 81.8 % |
+| 0.80–1.00 | 60 | 0.781 | 60.0 % |
+
+Performance is almost entirely a function of whether a close relative exists. Restricted
+to molecules with no relative above Tanimoto 0.5, analogue propagation scores **0.452** —
+which lands beside the best verified public stack (0.433) and the current leaderboard top
+(0.504).
+
+### What this means, and what has to change
+
+> **Our validation split is optimistic by roughly 0.26 MRR for any method that leans on
+> structural neighbourhood.** Splitting by molecule leaves whole families intact; the real
+> test behaves like the "no close relative" stratum.
+
+The inference runs the other way too, and it is reassuring about the data rather than
+about our split: the public leaderboard's 0.433 is almost exactly what this mechanism
+scores when relatives are absent. That is independent evidence that the real test was
+constructed to exclude the family overlap our split preserves.
+
+Consequences, in order:
+
+1. **The split must become family-disjoint**, not merely molecule-disjoint — a scaffold or
+   similarity-threshold split, which is standard practice in molecular ML and which this
+   work skipped. Every library-dependent number above is to be re-measured on it.
+2. **Formula identification is barely affected** (it never touches the library), so its
+   +0.037 stands. The `in_library` retrieval numbers and the fusion-rule ranking are
+   measured within one split and remain valid as *relative* comparisons.
+3. **FPNet is partly affected**: it trains on spectra of the validation molecules'
+   relatives, so its 0.210 is optimistic too, though less directly.
+4. **Analogue propagation is still the strongest single mechanism we have**, and the
+   stratification says where it fails — exactly the molecules with no documented family,
+   which is where the remaining score lives.
