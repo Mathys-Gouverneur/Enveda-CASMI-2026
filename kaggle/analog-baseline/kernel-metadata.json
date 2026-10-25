@@ -1,0 +1,19 @@
+{
+ "id": "mathysgouverneur/casmi-analog-baseline",
+ "title": "CASMI analog baseline",
+ "code_file": "notebook.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": true,
+ "enable_gpu": false,
+ "enable_tpu": false,
+ "enable_internet": false,
+ "dataset_sources": [
+  "mathysgouverneur/casmi-src"
+ ],
+ "competition_sources": [
+  "enveda-CASMI26-molecule-id-mass-spectra"
+ ],
+ "model_sources": [],
+ "kernel_sources": []
+}

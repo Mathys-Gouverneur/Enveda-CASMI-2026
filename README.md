@@ -26,6 +26,8 @@ ignored, and because `1/rank` decays fast, [the entire tail below rank 3 is wort
 | [`docs/measurement.md`](docs/measurement.md) | What we can tell apart, and what the task measurably is |
 | [`docs/leviers.md`](docs/leviers.md) | Every lever that could gain points, what each is worth, and the measured nulls |
 | [`docs/strategie.md`](docs/strategie.md) | The plan, the licence constraint, and what would falsify it |
+| [`docs/experiments.md`](docs/experiments.md) | Every number measured, and **what test set it was measured on** |
+| [`kaggle/README.md`](kaggle/README.md) | What Kaggle is told to run, and how to rehearse it first |
 | [`notebooks/external/README.md`](notebooks/external/README.md) | The 17 vendored public notebooks, with vote counts and why each is kept |
 
 Two facts from those documents worth having before anything else:
@@ -55,7 +57,7 @@ notebooks/external/                       vendored public kernels, one dir each
 notebooks/                                our own exploration
 scripts/                                  entry points
 src/casmi/                                the package
-kaggle/                                   notebooks we push to Kaggle
+kaggle/                                   notebooks we push to Kaggle, one dir each
 ```
 
 See [`data/README.md`](data/README.md) for why `raw/` is a symlink and not a directory.
