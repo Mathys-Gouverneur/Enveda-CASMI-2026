@@ -111,6 +111,9 @@ def main() -> None:
     ap.add_argument("--fpnet", default=str(D.ROOT / "out" / "fpnet_v1" / "fpnet.pt"))
     ap.add_argument("--neighbours", default=str(D.PROCESSED / "neighbours.npz"))
     ap.add_argument("--out", default=str(D.ROOT / "out"))
+    ap.add_argument("--dump-features", default=None,
+                    help="write a per-candidate feature table here, for the ranker and "
+                         "for a paired significance test the weighted sum cannot give")
     args = ap.parse_args()
 
     sdir, odir = pathlib.Path(args.splits), pathlib.Path(args.out)
@@ -218,6 +221,26 @@ def main() -> None:
         rows.append({"signals": name, "mrr": rr.mean(),
                      "top1": float((rr == 1).mean())})
         print(f"  {name:38s} MRR {rr.mean():.4f}   top-1 {(rr==1).mean()*100:5.1f} %")
+
+    if args.dump_features:
+        # One row per (molecule, candidate), so a ranker can be fitted and any pair of
+        # scoring rules compared molecule by molecule. The weighted sum above collapses
+        # that detail, which is why the +0.025 it reported could not be tested.
+        recs = []
+        for mol, keys in windows.items():
+            if not keys:
+                continue
+            a, f, p_ = analog_score[mol], formula_score[mol], fp_score[mol]
+            recs.append(pd.DataFrame({
+                "molecule_id": mol, "inchikey14": keys,
+                "is_true": [k == truth[mol] for k in keys],
+                "analog": a, "formula": f, "fpnet": p_,
+                "analog_z": z(a), "formula_z": z(f), "fpnet_z": z(p_),
+                "n_cand": len(keys),
+            }))
+        feats = pd.concat(recs, ignore_index=True)
+        feats.to_parquet(args.dump_features, index=False)
+        print(f"\nfeature table: {feats.shape} -> {args.dump_features}")
 
     df = pd.DataFrame(rows)
     df.to_csv(odir / f"combined_ceiling{args.family_ceiling}.csv", index=False)
