@@ -20,7 +20,16 @@ by roughly 0.26 for anything that leans on structural neighbourhood
 
 | date | what | where | MRR | commit | note |
 |---|---|---|---|---|---|
-| — | *analogue baseline, pending* | board | *predict ~0.43* | — | tests the calibration, not the method |
+| — | *analogue baseline, pending* | board | *predict ~0.43* | `79ff9f8` | kernel v4; tests the calibration, not the method |
+
+Three kernel versions failed before one ran, each for a different reason and each in under
+3 seconds because the checks sit at the top of the notebook unguarded:
+
+| v | failure | cause |
+|---|---|---|
+| 1 | `ModuleNotFoundError: casmi` | Kaggle expanded the uploaded zip and dropped the top-level directory, so no package existed. `find_library` now rebuilds it |
+| 2 | `ModuleNotFoundError: rdkit` | the Kaggle image does not ship RDKit. Now installed offline from `metric/rdkit-2026-3-3-wheel` — Kaggle's own account, the one publishing the official scorer |
+| 3 | `SystemExit: no cp313 wheel` | **our glob was wrong**: the file is `rdkit-2026.3.3-...` while `rdkit.__version__` reports `2026.03.3`. The wheel was mounted all along, and the message asserted a cause it had not checked. It now prints every `.whl` it can see |
 
 **Budget: 5 submissions per day.** What they are good for, and not:
 
@@ -34,6 +43,37 @@ by roughly 0.26 for anything that leans on structural neighbourhood
   one thing the board does better than its absolute number suggests.
 
 ## Offline measurements
+
+### The signals compose
+
+At the calibrated difficulty, three independent signals combined by weighted sum of
+per-molecule z-scores (`scripts/eval_combined.py`):
+
+| signals | where | n | MRR | top-1 |
+|---|---|---|---|---|
+| random | val@0.50 | 300 | 0.0637 | 1.7 % |
+| formula alone | val@0.50 | 300 | 0.0847 | 1.0 % |
+| FPNet alone | val@0.50 | 300 | 0.2293 | 10.7 % |
+| **analogue alone** | val@0.50 | 300 | **0.4341** | 30.0 % |
+| analogue + formula | val@0.50 | 300 | 0.4373 | 30.0 % |
+| analogue + FPNet | val@0.50 | 300 | 0.4557 | 32.0 % |
+| **analogue + formula + FPNet** | val@0.50 | 300 | **0.4587** | **32.3 %** |
+| the same, heavy weights | val@0.50 | 300 | 0.4497–0.4530 | |
+
+**Best single 0.4341 → best combination 0.4587, +0.0246.** They see different things, so a
+ranker is worth building rather than a chain of filters.
+
+Three caveats, all of which make the number *conservative* except the second:
+
+- FPNet here is **v1's degraded last-epoch checkpoint** — the one that scored 0.210 rather
+  than its true peak — and it still contributes +0.022.
+- FPNet trained on the validation molecules' **relatives**, so its contribution is
+  optimistic. Measuring it honestly needs a retrain with family exclusion applied to the
+  training set, not just at scoring time.
+- The +0.0246 is **not** significance-tested; per-molecule scores were not retained for the
+  combinations. At n=300 it is probably real, which is not the same as shown.
+
+### Single signals
 
 | what | where | n | MRR | note |
 |---|---|---|---|---|
