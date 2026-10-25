@@ -37,7 +37,12 @@ def stage_mounts(into: Path, shape: str = "expanded") -> None:
     """
     src = into / "casmi-src"
     src.mkdir(parents=True)
-    if shape == "zip":
+    if shape == "flat":
+        # What the first real push produced: Kaggle expanded the zip and dropped the
+        # top-level directory, so the modules land at the dataset root.
+        for f in sorted((ROOT / "src" / "casmi").rglob("*.py")):
+            shutil.copy2(f, src / f.name)
+    elif shape == "zip":
         import zipfile
         with zipfile.ZipFile(src / "casmi.zip", "w") as z:
             for f in sorted((ROOT / "src" / "casmi").rglob("*.py")):
@@ -58,7 +63,7 @@ def stage_mounts(into: Path, shape: str = "expanded") -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--kernel-dir", default="kaggle/analog-baseline", type=Path)
-    ap.add_argument("--shape", choices=("expanded", "zip"), default="expanded",
+    ap.add_argument("--shape", choices=("expanded", "zip", "flat"), default="expanded",
                     help="which library mount shape to fake")
     ap.add_argument("--bootstrap-only", action="store_true",
                     help="run only the mount-finding and import cells")
