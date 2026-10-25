@@ -52,7 +52,41 @@ has been chosen on `select`.
 
 | date | what | where | MRR | commit | note |
 |---|---|---|---|---|---|
-| — | *analogue baseline, pending* | board | *predict ~0.43* | `79ff9f8` | kernel v4; tests the calibration, not the method |
+| 2026-10-25 | analogue propagation alone | board | **0.080** | `79ff9f8` | predicted ~0.43. The random floor |
+
+### What that one number established
+
+It cost one submission and invalidated the whole measuring instrument, which is what it
+was for.
+
+- **The pipeline is correct.** Scored against the visible `test.parquet` it gets MRR
+  **1.0000**, top-1 100 %. So the 0.080 is not a bug.
+- **The visible test is a copy of training data.** All 400 molecules have a training
+  spectrum at cosine **1.000**, and all 400 true structures sit in our candidate bank and
+  inside the ±10 ppm window. It is a placeholder and measures nothing.
+- **Therefore Kaggle re-runs the notebook against hidden data**, and 0.080 is a real score
+  on a real test.
+- **Our validation measured an easier task, in a way the family ceiling did not fix.**
+  Validation molecules were drawn from `train`, so the answer was *always* in the
+  candidate bank. That also makes the earlier "external banks add zero recall" finding
+  circular: molecules from `train` are in `train` by construction, so nothing external
+  could add anything.
+- **The ceiling-0.50 calibration was a coincidence.** 0.434 and 0.433 came from two
+  different methods on two different test sets, which is what the entry then said and was
+  relied on anyway.
+
+Two hypotheses survive, and the single number mildly favours the second:
+
+| | | implication |
+|---|---|---|
+| a | the answer is not in our candidate bank | rebuild it from external structure databases |
+| b | the answer is there and our ranking is noise | a library-free signal is needed, not better matching |
+
+0.080 is about the MRR of ranking our own window at random (0.085), and that figure
+assumes the answer *is* in the window — if it were often absent, random would score
+clearly less. Hence (b).
+
+| — | *FPNet v2, pending* | board | *no prediction* | — | the experiment that discriminates (a) from (b) |
 
 Three kernel versions failed before one ran, each for a different reason and each in under
 3 seconds because the checks sit at the top of the notebook unguarded:

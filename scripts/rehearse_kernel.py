@@ -27,7 +27,8 @@ from casmi import data as D
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def stage_mounts(into: Path, shape: str = "expanded") -> None:
+def stage_mounts(into: Path, shape: str = "expanded",
+                 model_run: str | None = None) -> None:
     """One directory per dataset, as Kaggle lays them out.
 
     Both library shapes have to be rehearsed, because which one arrives is Kaggle's
@@ -51,6 +52,16 @@ def stage_mounts(into: Path, shape: str = "expanded") -> None:
         shutil.copytree(ROOT / "src" / "casmi", src / "casmi",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
+    # Staged only when the kernel asks for it, read off its own dataset_sources, so the
+    # rehearsal mirrors that kernel's mounts rather than a fixed guess.
+    if model_run is not None:
+        model = into / "casmi-fpnet"
+        model.mkdir(parents=True)
+        ck = ROOT / model_run / "fpnet.pt"
+        if not ck.exists():
+            raise SystemExit(f"{ck} is missing; cannot rehearse the FPNet kernel")
+        (model / "fpnet.pt").symlink_to(ck.resolve())
+
     comp = into / "enveda-CASMI26-molecule-id-mass-spectra"
     comp.mkdir(parents=True)
     for name in ("train.parquet", "test.parquet", "sample_submission.csv"):
@@ -63,6 +74,9 @@ def stage_mounts(into: Path, shape: str = "expanded") -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--kernel-dir", default="kaggle/analog-baseline", type=Path)
+    ap.add_argument("--model-run", default=None,
+                    help="stage this training run's fpnet.pt as the casmi-fpnet mount, "
+                         "for a kernel whose dataset_sources ask for it")
     ap.add_argument("--shape", choices=("expanded", "zip", "flat"), default="expanded",
                     help="which library mount shape to fake")
     ap.add_argument("--bootstrap-only", action="store_true",
@@ -82,7 +96,7 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="casmi-rehearse-") as tmp:
         mounts = Path(tmp)
-        stage_mounts(mounts, args.shape)
+        stage_mounts(mounts, args.shape, args.model_run)
         os.environ["KAGGLE_INPUT"] = str(mounts)
         print(f"  faked mounts at {mounts}\n")
 

@@ -1,0 +1,21 @@
+{
+ "id": "mathysgouverneur/casmi-fpnet",
+ "title": "CASMI fpnet",
+ "code_file": "notebook.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "enable_internet": false,
+ "dataset_sources": [
+  "mathysgouverneur/casmi-src",
+  "mathysgouverneur/casmi-fpnet",
+  "metric/rdkit-2026-3-3-wheel"
+ ],
+ "competition_sources": [
+  "enveda-CASMI26-molecule-id-mass-spectra"
+ ],
+ "model_sources": [],
+ "kernel_sources": []
+}
