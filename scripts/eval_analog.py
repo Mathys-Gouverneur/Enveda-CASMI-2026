@@ -53,6 +53,11 @@ def main() -> None:
     ap.add_argument("--ppm", type=float, default=10.0)
     ap.add_argument("--top-k", type=int, nargs="+", default=[20, 80])
     ap.add_argument("--p", type=float, nargs="+", default=[1.0, 3.0, 6.0])
+    ap.add_argument("--family-ceiling", type=float, nargs="+", default=[1.0],
+                    help="drop analogues whose structural Tanimoto to the true answer is "
+                         "at or above this, simulating a library from which the "
+                         "molecule's family is absent. 1.0 keeps today's split.")
+    ap.add_argument("--neighbours", default=str(D.PROCESSED / "neighbours.npz"))
     ap.add_argument("--out", default=str(D.ROOT / "out"))
     args = ap.parse_args()
 
@@ -92,8 +97,26 @@ def main() -> None:
     print(f"  {len(ref):,} reference spectra over {ref.inchikey14.nunique():,} molecules"
           f" — none of them a validation molecule")
 
+    # Per-molecule relative sets, for the family-disjoint ceilings. Filtering analogues
+    # by their similarity to the true answer uses the label -- legitimate, because it
+    # constructs a harder *split*, not a method: it simulates a reference library from
+    # which this molecule's chemical family is absent. No real system could do this, and
+    # nothing downstream of the split sees it.
+    relatives: dict[str, dict[str, float]] = {}
+    if max(args.family_ceiling) < 1.0 or len(args.family_ceiling) > 1:
+        nz = np.load(args.neighbours, allow_pickle=True)
+        vk, bkk = nz["val_keys"], nz["bank_keys"]
+        for r, c, t in zip(nz["row"], nz["col"], nz["tanimoto"]):
+            if t < 0.999:
+                relatives.setdefault(str(vk[r]), {})[str(bkk[c])] = float(t)
+        print(f"neighbour table: {len(relatives):,} molecules with relatives "
+              f">= {float(nz['min_tanimoto']):.2f}")
+
     t0 = time.time()
-    analogues = AN.find_analogues(query, ref, top_k=max(args.top_k), verbose=True)
+    # Search wide: the ceilings discard the closest analogues, so there must be enough
+    # left underneath to still fill top_k.
+    search_k = min(max(args.top_k) * 8, 400) if relatives else max(args.top_k)
+    analogues = AN.find_analogues(query, ref, top_k=search_k, verbose=True)
     print(f"analogue search: {time.time()-t0:.0f}s")
 
     # sanity: the true answer must never appear among its own analogues
@@ -131,17 +154,24 @@ def main() -> None:
     print(f"  random over the mass window   {base_rand:.4f}")
     print(f"  formula soft ordering         {base_formula:.4f}")
 
-    for top_k in args.top_k:
+    for ceil in args.family_ceiling:
+      for top_k in args.top_k:
         for p in args.p:
-            rr, rr_combo = [], []
+            rr, rr_combo, best_left = [], [], []
             for mol in truth:
                 keys = windows[mol]
                 if not keys:
-                    rr.append(0.0); rr_combo.append(0.0); continue
+                    rr.append(0.0); rr_combo.append(0.0)
+                    best_left.append(0.0); continue
                 cand_fp = X[[row_of[k] for k in keys]]
                 # Analogue keys always resolve: the reference library was filtered to
                 # structures present in the bank before the search.
-                a = [x for x in analogues[mol][:top_k] if x[0] in row_of]
+                rel = relatives.get(truth[mol], {})
+                avail = [x for x in analogues[mol]
+                         if x[0] in row_of and rel.get(x[0], 0.0) < ceil]
+                a = avail[:top_k]
+                bl = max((rel.get(k, 0.0) for k, _ in a), default=0.0)
+                best_left.append(bl)
                 an_fp = X[[row_of[k] for k, _ in a]] if a else None
                 s = AN.propagate(a, np.array(keys, dtype=object),
                                  cand_fp=cand_fp, analog_fp=an_fp, p=p)
@@ -153,10 +183,12 @@ def main() -> None:
                                key=lambda i: (fo.get(key_to_formula.get(keys[i]), 99), -s[i]))
                 rr_combo.append(rr_of(np.array(keys, dtype=object)[combo], truth[mol]))
             mrr, mrr_c = float(np.mean(rr)), float(np.mean(rr_combo))
-            rows.append({"top_k": top_k, "p": p, "mrr_analog": mrr,
-                         "mrr_analog_plus_formula": mrr_c})
-            print(f"  top_k {top_k:3d}  p {p:4.1f}  ->  analogue {mrr:.4f}   "
-                  f"+ formula {mrr_c:.4f}")
+            rows.append({"family_ceiling": ceil, "top_k": top_k, "p": p,
+                         "mrr_analog": mrr, "mrr_analog_plus_formula": mrr_c,
+                         "median_best_relative": float(np.median(best_left))})
+            print(f"  ceiling {ceil:4.2f}  top_k {top_k:3d}  p {p:4.1f}  ->  "
+                  f"analogue {mrr:.4f}   + formula {mrr_c:.4f}   "
+                  f"(best relative left, median {np.median(best_left):.3f})")
             if mrr_c > max(per_mol_best.values(), default=-1):
                 per_mol_best = {"mrr": mrr_c}
 

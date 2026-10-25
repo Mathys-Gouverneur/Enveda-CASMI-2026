@@ -361,3 +361,56 @@ Consequences, in order:
 4. **Analogue propagation is still the strongest single mechanism we have**, and the
    stratification says where it fails — exactly the molecules with no documented family,
    which is where the remaining score lives.
+
+## 10. Calibrating our validation against the real leaderboard
+
+`scripts/build_neighbours.py`, then `scripts/eval_analog.py --family-ceiling ...`.
+
+§9 showed our molecule-level split is too easy because it leaves chemical families intact.
+The fix is not one harder split but a **tunable one**. `build_neighbours.py` computes every
+(validation molecule, bank structure) pair with Tanimoto ≥ 0.35 — 10.6 M pairs in 120 s —
+and the evaluation then drops analogues at or above a ceiling, simulating a library from
+which the molecule's family is absent.
+
+Note what is filtered and what is not. The **reference spectral library** loses the
+relatives; the **candidate bank keeps everything**, because the true answer has to stay
+findable and the real test's candidate pool is not family-filtered either. The filter uses
+the label, which is legitimate: it constructs a harder split, not a method, and nothing
+downstream of the split can see it.
+
+Measured on 300 molecules, `top_k = 10`, `p = 3`:
+
+| family ceiling | median best relative left | MRR, analogue propagation |
+|---|---|---|
+| 1.00 — our molecule-level split | 0.695 | 0.682 |
+| 0.80 | 0.638 | 0.669 |
+| 0.70 | 0.578 | 0.631 |
+| 0.60 | 0.494 | 0.547 |
+| **0.50** | 0.432 | **0.4341** |
+| 0.45 | 0.388 | 0.355 |
+| 0.40 | 0.360 | 0.263 |
+
+> **At ceiling 0.50 analogue propagation scores 0.4341. The best verified public stack
+> scores 0.433 on the real test.**
+
+A match to 0.001. Three things follow.
+
+**We now have a calibrated validation.** The real test behaves like a family-disjoint
+split at ceiling ≈ 0.50, so our split can be set to reproduce the real difficulty instead
+of understating it by 0.25. Every future comparison should be run at that ceiling, and
+ideally reported across the curve — a method that only helps where close relatives exist
+is a method that will not transfer.
+
+**One well-tuned mechanism reproduces the entire public stack.** Their two engines,
+forward simulators, popularity prior, PubChem join and rank fusion arrive at the same place
+as analogue propagation alone. Either their stacking adds almost nothing on top of the
+analogue signal, or they are leaving a great deal on the table elsewhere. Both readings
+argue for building up from a measured baseline rather than forking their pipeline.
+
+**Formula must be a feature, not a sort key.** The combination column is worse than
+analogue propagation alone at *every one of the seven ceilings* — 0.371 against 0.682 at
+ceiling 1.0, 0.242 against 0.434 at 0.50. Ordering by formula group first pushes the true
+answer behind an entire wrong group whenever the formula call is wrong, and at 51.5 %
+accuracy that happens often enough to cost more than the signal is worth. §6 reached this
+conclusion from the gate-versus-soft-ordering arithmetic; this confirms it against a strong
+ranker instead of against random.

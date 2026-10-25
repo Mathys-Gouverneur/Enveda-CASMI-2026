@@ -195,6 +195,9 @@ def main() -> None:
     ap.add_argument("--d-model", type=int, default=512)
     ap.add_argument("--n-layers", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n-select", type=int, default=800,
+                    help="validation molecules reserved for picking the epoch; the rest "
+                         "are reported and never consulted during training")
     ap.add_argument("--v2", action="store_true",
                     help="conditioned model: per-peak neutral loss, a global token "
                          "carrying precursor/energy/polarity/adduct/instrument, and "
@@ -300,7 +303,24 @@ def main() -> None:
         opt, max_lr=args.lr, total_steps=args.epochs * len(dl), pct_start=0.1)
     scaler_dtype = torch.bfloat16
 
-    print(f"\ntraining {args.epochs} epochs x {len(dl)} steps")
+    # Model selection needs molecules that are NOT the ones we report on, or the reported
+    # number is optimistic by construction. The 4,000 validation molecules are split:
+    # `sel` picks the epoch, `rep` is reported and never consulted during training.
+    sel_mols = set(sorted(truth)[: args.n_select])
+    q_sel = query[query.molecule_id.isin(sel_mols)]
+    q_rep = query[~query.molecule_id.isin(sel_mols)]
+    truth_rep = {m: t for m, t in truth.items() if m not in sel_mols}
+    print(f"\nepoch selection on {len(sel_mols):,} molecules, "
+          f"reporting on the other {len(truth_rep):,}")
+
+    def mrr_now(q, t_map) -> float:
+        lg = predict_logits(model, q, args.max_peaks, device, cond)
+        preds = rank_with_fingerprints(q, lg, bank_mass, bank_keys, Y, args.ppm, "logit")
+        return float(np.mean(list(M.mrr(preds, t_map, already_keys=True).values())))
+
+    print(f"training {args.epochs} epochs x {len(dl)} steps")
+    best = {"mrr": -1.0, "epoch": -1, "state": None}
+    history = []
     for epoch in range(args.epochs):
         model.train()
         running, seen, t0 = 0.0, 0, time.time()
@@ -320,14 +340,36 @@ def main() -> None:
                 print(f"  epoch {epoch} step {step:5d}/{len(dl)}  "
                       f"loss {running/max(seen,1):.4f}  "
                       f"{seen/(time.time()-t0):.0f} spectra/s", flush=True)
-        print(f"  epoch {epoch} done: loss {running/seen:.4f} in {time.time()-t0:.0f}s")
+        train_loss = running / seen
+        # The metric we actually care about, every epoch. v1 was trained for 10 epochs,
+        # peaked at epoch 2 by training loss and then rose to 1.03, and the script saved
+        # the LAST epoch -- so the reported 0.210 came from a degraded model. Selecting on
+        # MRR rather than on loss, and keeping the best state, removes that failure mode
+        # and costs about 3% of an epoch.
+        val = mrr_now(q_sel, {m: truth[m] for m in sel_mols})
+        history.append({"epoch": epoch, "train_loss": train_loss, "select_mrr": val})
+        flag = ""
+        if val > best["mrr"]:
+            best = {"mrr": val, "epoch": epoch,
+                    "state": {k: v.detach().cpu().clone()
+                              for k, v in model.state_dict().items()}}
+            flag = "  <- best"
+        print(f"  epoch {epoch} done: loss {train_loss:.4f}  "
+              f"select MRR {val:.4f}{flag}  ({time.time()-t0:.0f}s)", flush=True)
+
+    print(f"\nbest epoch {best['epoch']} at select MRR {best['mrr']:.4f}; restoring it")
+    model.load_state_dict(best["state"])
+    pd.DataFrame(history).to_csv(odir / "history.csv", index=False)
 
     torch.save({"state_dict": model.state_dict(), "cfg": cfg.__dict__, "bits": bits,
-                "v2": args.v2,
+                "v2": args.v2, "best_epoch": best["epoch"],
                 "adduct_vocab": cond.adduct if cond else None,
                 "instrument_vocab": cond.instrument if cond else None},
                odir / "fpnet.pt")
-    print(f"\nsaved {odir/'fpnet.pt'}")
+    print(f"saved {odir/'fpnet.pt'}")
+
+    # From here on, everything is reported on the molecules selection never saw.
+    query, truth = q_rep, truth_rep
 
     # ------------------------------------------------------------------ evaluation
     print("\n" + "=" * 78)
