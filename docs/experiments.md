@@ -9,12 +9,44 @@ is a cautionary tale about that, so every row names its test set.
 | column | meaning |
 |---|---|
 | **where** | `board` = the real Kaggle leaderboard, 400 molecules, ±0.047 at 95 % · `val@T` = our validation split at family-disjoint ceiling `T` (`T=1.0` is molecule-level, `T=0.50` is the setting we believe reproduces the real test) |
+| **set** | which of the three disjoint validation sets — `fit` / `select` / `report` / `mixed` |
 | **n** | molecules scored |
 | **commit** | the stamp the run printed, joining the score to the code |
 
 A `val@1.00` number and a `board` number are **not comparable**: the former is optimistic
 by roughly 0.26 for anything that leans on structural neighbourhood
 ([`measurement.md`](measurement.md) §9).
+
+## The three sets, and why every number below 2026-10-25 is labelled `mixed`
+
+`src/casmi/evaluation.py` splits the 4,000 validation molecules three ways, by hashing the
+id so the assignment is identical across runs and stable when molecules are added:
+
+| set | n | what may touch it |
+|---|---|---|
+| `fit` | 1,966 | fitting weights, ranker parameters, `top_k`, `p`, thresholds |
+| `select` | 1,036 | choosing *between* configurations, and choosing a training epoch |
+| `report` | 998 | read **once per decision**, never for tuning |
+
+The rule: a configuration is chosen on `select`, then read once on `report`, and the
+`report` number is the quotable one. `Evaluation.quote` keeps a ledger and **refuses** a
+second read for the same decision, because re-reading a held-out set until the number
+looks right is how it stops being held out.
+
+**Everything measured before this split existed is labelled `mixed`, and is directional
+rather than quotable.** Those runs took the first N molecules by id — a blend of all three
+sets — and tuned on the same molecules they reported. Concretely:
+
+- `top_k = 10` and `p = 3` for analogue propagation were chosen on the molecules that then
+  reported 0.434.
+- the neutral-loss weight and the fusion rule were swept on the molecules that reported the
+  +0.0066.
+- the ranker's 0.4549 is the maximum of a six-configuration sweep on its own evaluation set.
+
+None of those are wrong in sign — the effects are large relative to their intervals and
+several were paired. They are unquotable as *magnitudes*, which is a different and smaller
+problem, and the fix is to re-measure the ones that matter on `report` once a configuration
+has been chosen on `select`.
 
 ## Submissions to the board
 
@@ -110,9 +142,9 @@ The fix is more molecules, not a different model: a full 4,000-molecule feature 
 
 ### Single signals
 
-| what | where | n | MRR | note |
-|---|---|---|---|---|
-| analogue propagation, `top_k=10`, `p=3` | val@1.00 | 300 | **0.682** | strongest single mechanism |
+| what | where | set | n | MRR | note |
+|---|---|---|---|---|---|
+| analogue propagation, `top_k=10`, `p=3` | val@1.00 | mixed | 300 | **0.682** | strongest single mechanism |
 | " | val@0.80 | 300 | 0.669 | |
 | " | val@0.70 | 300 | 0.631 | |
 | " | val@0.60 | 300 | 0.547 | |

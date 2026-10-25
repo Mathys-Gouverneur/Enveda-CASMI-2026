@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from casmi import data as D
+from casmi import evaluation as EV
 from casmi import formula as FO
 from casmi import fpnet as N
 from casmi import metric as M
@@ -324,3 +325,51 @@ def test_pos_weight_is_capped():
     assert w[0] == pytest.approx(1.0, abs=0.01)
     assert w[1] == pytest.approx(50.0)
     assert w[2] == pytest.approx(0.0, abs=1e-6)
+
+
+# --------------------------------------------------------------------------- evaluation
+
+def test_three_sets_are_disjoint_and_exhaustive():
+    ids = [f"v_{i:05d}" for i in range(4000)]
+    sets = EV.assign_sets(ids)
+    members = {name: {m for m, s in sets.items() if s == name} for name in EV.SHARES}
+    assert sum(len(v) for v in members.values()) == len(ids)
+    for a, b in (("fit", "select"), ("fit", "report"), ("select", "report")):
+        assert not members[a] & members[b]
+
+
+def test_assignment_is_order_invariant():
+    """Hashed, not shuffled: a seeded permutation would move molecules between sets
+    the moment the input order changed, silently invalidating every earlier number."""
+    ids = [f"v_{i:05d}" for i in range(500)]
+    assert EV.assign_sets(ids) == EV.assign_sets(list(reversed(ids)))
+
+
+def test_adding_molecules_does_not_reassign_existing_ones():
+    ids = [f"v_{i:05d}" for i in range(500)]
+    before = EV.assign_sets(ids)
+    after = EV.assign_sets(ids + [f"w_{i}" for i in range(200)])
+    assert all(after[m] == before[m] for m in ids)
+
+
+def test_report_set_refuses_a_second_read_for_one_decision():
+    """Re-reading the held-out set until a number looks right is how it stops being
+    held out, so the ledger refuses rather than trusting anyone to remember."""
+    ids = [f"v_{i:05d}" for i in range(400)]
+    ev = EV.Evaluation(EV.assign_sets(ids))
+    scores = {m: 0.5 for m in ids}
+    ev.quote("first question", scores)
+    with pytest.raises(RuntimeError):
+        ev.quote("first question", scores)
+    ev.quote("a different question", scores)          # a new decision is fine
+    assert ev.reads == 2
+
+
+def test_paired_difference_calls_a_zero_effect_noise():
+    ids = [f"v_{i:05d}" for i in range(300)]
+    rng = np.random.default_rng(0)
+    a = {m: float(rng.random()) for m in ids}
+    b = dict(a)                                        # identical: no effect at all
+    assert EV.paired_difference(a, b)["real"] is False
+    c = {m: v + 0.2 for m, v in a.items()}             # a large, consistent shift
+    assert EV.paired_difference(c, a)["real"] is True
