@@ -60,8 +60,13 @@ per-molecule z-scores (`scripts/eval_combined.py`):
 | **analogue + formula + FPNet** | val@0.50 | 300 | **0.4587** | **32.3 %** |
 | the same, heavy weights | val@0.50 | 300 | 0.4497–0.4530 | |
 
-**Best single 0.4341 → best combination 0.4587, +0.0246.** They see different things, so a
-ranker is worth building rather than a chain of filters.
+**Best single 0.4341 → best combination 0.4587, +0.0246.** Reproduced on 600 molecules at
+0.4321 → 0.4528, and there the difference could be tested properly:
+
+> **weighted sum − analogue alone: +0.0207 ± 0.0099 (95 %, paired, n = 600) → REAL.**
+
+So the signals do see different things. But a trained ranker over them does **not** beat
+adding them up — see below.
 
 Three caveats, all of which make the number *conservative* except the second:
 
@@ -72,6 +77,36 @@ Three caveats, all of which make the number *conservative* except the second:
   training set, not just at scoring time.
 - The +0.0246 is **not** significance-tested; per-molecule scores were not retained for the
   combinations. At n=300 it is probably real, which is not the same as shown.
+
+### The ranker does not beat a weighted sum yet, and it is a sample-size problem
+
+`scripts/train_ranker.py`, LambdaRank over 19 features, grouped 5-fold CV by molecule,
+600 molecules and 600 positives:
+
+| | MRR | paired against the weighted sum |
+|---|---|---|
+| analogue alone | 0.4321 | |
+| weighted sum of z-scores | **0.4528** | — |
+| ranker, 300 trees / 15 leaves (first attempt) | 0.4422 | −0.0106 ± 0.0183 |
+| **ranker, 100 trees / 7 leaves** | **0.4549** | +0.0021 ± 0.0134 |
+| ranker, 50 trees / 3 leaves | 0.4392 | −0.0136 ± 0.0110 |
+
+At best the ranker **ties** the hand-set weighted sum. The first configuration was simply
+over-capacity — 19 features and 300 trees against 600 positives — and halving it helped,
+but not enough to win.
+
+Two honest notes on that table:
+
+- **0.4549 is not a clean number.** It is the maximum of a six-configuration sweep
+  evaluated on the same 600 molecules, which is precisely the selection-on-the-test-set
+  mistake this document exists to avoid. It is recorded as a sweep maximum, not as a
+  result.
+- The feature importances say the design is sound even though the fit is not: the
+  agreement terms get real use (`prod_formula_fpnet` 346 splits, `prod_analog_fpnet` 297),
+  as do `log_n_cand` (319) and the delta-to-maximum features that dominate the list.
+
+The fix is more molecules, not a different model: a full 4,000-molecule feature dump gives
+6.7× the positives. Queued.
 
 ### Single signals
 
